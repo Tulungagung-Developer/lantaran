@@ -16,4 +16,5 @@ lantaran-engine.workspace = true
 lantaran-rules.workspace = true
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
+qrcode = { version = "0.14", default-features = false }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "signal"] }

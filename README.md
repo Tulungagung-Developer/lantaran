@@ -13,9 +13,10 @@ Early. The engine and a command line tool work; the desktop apps do not exist ye
 | Works today | Planned next |
 | --- | --- |
 | HTTP proxy, HTTP/1.1 and HTTP/2 | WebSocket frames |
-| HTTPS decryption for the hosts you list | Certificate download page and QR code |
-| Untouched tunnelling for every other host | Guided iOS and Android setup |
-| Headers and bodies, decoded for display (`--verbose`) | macOS app |
+| HTTPS decryption for the hosts you list | Guided iOS and Android setup |
+| Untouched tunnelling for every other host | macOS app |
+| Headers and bodies, decoded for display (`--verbose`) | |
+| Certificate download page and QR code | |
 | Root certificate created on first run | |
 
 Each release is a [milestone](https://github.com/Tulungagung-Developer/lantaran/milestones), and the
@@ -47,10 +48,11 @@ To check it from the same machine:
 curl -x http://127.0.0.1:9090 --cacert "<root certificate path>" https://api.example.com/
 ```
 
-To capture a phone, set the address from the first line as the manual HTTP proxy
-in the phone's Wi-Fi settings, then install and trust the root certificate on
-the phone. Until the certificate download page lands, copy the `.pem` file to
-the device yourself (AirDrop, or `adb push`).
+To capture a phone, start Lantaran with `--listen 0.0.0.0:9090`, scan the QR
+code it prints (or open the printed address) on the phone, and follow the steps
+on that page to install and trust the certificate. Then set the same address as
+the manual HTTP proxy in the phone's Wi-Fi settings. From a simulator or
+emulator, or once the proxy is set, the page is also at `http://lantaran.ssl/`.
 
 Without `--listen`, Lantaran accepts connections from this machine only, which
 is enough for `curl` and the iOS simulator. Listening on `0.0.0.0` lets every
