@@ -64,10 +64,7 @@ impl Engine {
     pub fn new(ca: RootCa, ssl_proxying: SslProxyingList) -> (Self, EventStream) {
         let events = EventQueue::new(DEFAULT_EVENT_CAPACITY);
         let stream = EventStream::new(Arc::clone(&events));
-        let certificate = CertificateFiles {
-            pem: ca.cert_pem().to_owned().into(),
-            der: ca.cert_der().into(),
-        };
+        let certificate = CertificateFiles::new(ca.cert_pem(), ca.cert_der());
         let shared = Arc::new(Shared {
             ssl_proxying: RwLock::new(ssl_proxying),
             events,

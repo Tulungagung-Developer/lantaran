@@ -902,8 +902,8 @@ async fn the_proxy_address_serves_the_certificate_page() {
         "iOS steps expected: {reply}"
     );
     assert!(
-        reply.contains("href=\"/lantaran-ca.crt\""),
-        "download link expected"
+        reply.contains("href=\"/lantaran.mobileconfig\""),
+        "an iPhone gets the profile: {reply}"
     );
     assert!(
         proxy.events.try_recv().is_none(),
@@ -938,6 +938,40 @@ async fn the_certificate_downloads_in_both_forms() {
         "the PEM download must be the root certificate"
     );
     assert!(proxy.events.try_recv().is_none());
+}
+
+#[tokio::test]
+async fn an_iphone_downloads_a_configuration_profile() {
+    let proxy = start_proxy(SslProxyingList::new()).await;
+
+    let reply = send(
+        proxy.addr,
+        "GET /lantaran.mobileconfig HTTP/1.1\r\nHost: proxy\r\nConnection: close\r\n\r\n"
+            .to_owned(),
+    )
+    .await;
+
+    assert!(
+        reply.starts_with("HTTP/1.1 200"),
+        "unexpected reply: {reply}"
+    );
+    assert!(
+        reply
+            .to_lowercase()
+            .contains("content-type: application/x-apple-aspen-config"),
+        "unexpected reply: {reply}"
+    );
+    assert!(reply.contains("<string>com.apple.security.root</string>"));
+    // The profile embeds the same certificate the PEM download offers.
+    let pem_body: String = proxy
+        .ca_pem
+        .lines()
+        .filter(|line| !line.starts_with("-----"))
+        .collect();
+    assert!(
+        reply.contains(&format!("<data>{pem_body}</data>")),
+        "the profile must carry the root certificate"
+    );
 }
 
 #[tokio::test]
