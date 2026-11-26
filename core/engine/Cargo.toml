@@ -12,11 +12,15 @@ lantaran-rules.workspace = true
 bytes.workspace = true
 hudsucker.workspace = true
 http-body-util.workspace = true
+hyper-rustls.workspace = true
+rustls-native-certs.workspace = true
+webpki-roots.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["macros", "net", "sync", "rt", "time"] }
 
 [dev-dependencies]
 flate2 = "1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12"] }
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "time"] }

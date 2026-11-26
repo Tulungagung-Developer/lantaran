@@ -57,7 +57,12 @@ is enough for `curl` and the iOS simulator. Listening on `0.0.0.0` lets every
 device on the network use the proxy, so do that on networks you trust. Requests
 from other devices to this machine's loopback addresses are always refused.
 
-Only hosts passed with `--ssl` are decrypted. Apps that pin their certificates
+Only hosts passed with `--ssl` are decrypted. When decrypting, Lantaran checks the
+server's certificate against the public roots and every certificate authority
+installed on this machine, so `mkcert` and company CAs work. For a development
+server with a self-signed certificate, add `--insecure-host <HOST>`.
+
+Apps that pin their certificates
 cannot be decrypted, and Android release builds ignore user-installed
 certificates unless the app opts in.
 

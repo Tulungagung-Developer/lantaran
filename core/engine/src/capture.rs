@@ -36,14 +36,17 @@ pub const MAX_DECODED_SIZE: usize = 64 * 1024 * 1024;
 pub(crate) struct FlowTracker {
     pub(crate) id: FlowId,
     pub(crate) started: Instant,
+    /// Whether the server's certificate is accepted without being checked.
+    pub(crate) unverified_upstream: bool,
     request_size: AtomicU64,
 }
 
 impl FlowTracker {
-    pub(crate) fn new(id: FlowId) -> Arc<Self> {
+    pub(crate) fn new(id: FlowId, unverified_upstream: bool) -> Arc<Self> {
         Arc::new(Self {
             id,
             started: Instant::now(),
+            unverified_upstream,
             request_size: AtomicU64::new(0),
         })
     }

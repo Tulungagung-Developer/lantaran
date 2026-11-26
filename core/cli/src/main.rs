@@ -1,6 +1,7 @@
 use clap::Parser;
 use lantaran_engine::{
-    Direction, Engine, EventStream, FlowEvent, FlowId, Headers, RootCa, SslProxyingList,
+    Direction, Engine, EventStream, FlowEvent, FlowId, Headers, HostPattern, RootCa,
+    SslProxyingList,
 };
 use std::{
     error::Error,
@@ -25,6 +26,12 @@ struct Args {
     /// more hosts. HTTPS to any other host passes through unread.
     #[arg(long = "ssl", value_name = "HOST")]
     ssl: Vec<String>,
+
+    /// Host whose certificate is accepted without being checked, for a
+    /// development server with a self-signed certificate. Takes the same
+    /// patterns as --ssl and can be repeated.
+    #[arg(long = "insecure-host", value_name = "HOST")]
+    insecure_hosts: Vec<String>,
 
     /// Directory that holds the root certificate and its key.
     #[arg(long, value_name = "DIR")]
@@ -80,7 +87,20 @@ async fn run(args: Args) -> Result<(), Box<dyn Error>> {
         println!("Decrypting: {}", args.ssl.join(", "));
     }
 
+    if !args.insecure_hosts.is_empty() {
+        println!(
+            "Not checking certificates of: {}",
+            args.insecure_hosts.join(", ")
+        );
+    }
+
     let (engine, events) = Engine::new(ca, ssl_proxying);
+    engine.set_exempt_hosts(
+        args.insecure_hosts
+            .iter()
+            .map(|host| HostPattern::new(host.as_str()))
+            .collect(),
+    );
     let engine = Arc::new(engine);
     tokio::spawn(print_events(Arc::clone(&engine), events, args.verbose));
 
@@ -134,8 +154,14 @@ async fn print_event(engine: &Engine, event: FlowEvent, verbose: bool) {
                 version,
                 headers,
                 elapsed,
+                unverified_upstream,
             } => {
-                println!("#{id} {status} after {} ms", elapsed.as_millis());
+                let note = if unverified_upstream {
+                    "  (server certificate not checked)"
+                } else {
+                    ""
+                };
+                println!("#{id} {status} after {} ms{note}", elapsed.as_millis());
                 if verbose {
                     print_headers(&version, &headers);
                 }

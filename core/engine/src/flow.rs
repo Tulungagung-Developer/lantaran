@@ -38,6 +38,9 @@ pub enum FlowEvent {
         headers: Headers,
         /// Time from the request arriving to the response headers arriving.
         elapsed: Duration,
+        /// The server's host is exempt from certificate checks, so its
+        /// certificate may have been accepted without being verified.
+        unverified_upstream: bool,
     },
 
     /// The response body was delivered to the client in full.
