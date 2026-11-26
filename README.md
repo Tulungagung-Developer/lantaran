@@ -18,7 +18,9 @@ Early. The engine and a command line tool work; the desktop apps do not exist ye
 | Root certificate created on first run | Guided iOS and Android setup |
 | Flow events printed in the terminal | macOS app |
 
-The [milestones](https://github.com/Tulungagung-Developer/lantaran/milestones) track the plan.
+Each release is a [milestone](https://github.com/Tulungagung-Developer/lantaran/milestones), and the
+[roadmap](https://github.com/Tulungagung-Developer/lantaran/issues/34) lists everything planned, including
+work that has no release yet.
 
 ## Try it
 
@@ -73,7 +75,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the reasons 
 
 ## Contributing
 
-Pick an issue from the current milestone and say you are taking it. Before
+Pick an issue from the next release's milestone and comment that you are taking it. Before
 opening a pull request, run this inside `core/`:
 
 ```sh
