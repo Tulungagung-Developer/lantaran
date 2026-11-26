@@ -1,0 +1,16 @@
+{
+  "" : {
+    "const-values" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/LantaranCore-primary.swiftconstvalues",
+    "dependencies" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/LantaranCore-primary.d",
+    "diagnostics" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/LantaranCore-primary.dia",
+    "emit-module-dependencies" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/LantaranCore-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/LantaranCore-primary-emit-module.dia",
+    "pch" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/LantaranCore-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/LantaranCore-primary.swiftdeps"
+  },
+  "/Users/hanny/Works/tadev/lantaran/apps/macos/Sources/LantaranCore/lantaran_ffi.swift" : {
+    "index-unit-output-path" : "/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/lantaran_ffi.o",
+    "llvm-bc" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/lantaran_ffi.bc",
+    "object" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/LantaranCore-t.build/Objects-normal/arm64/lantaran_ffi.o"
+  }
+}

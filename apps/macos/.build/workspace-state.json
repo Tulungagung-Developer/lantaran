@@ -1,0 +1,31 @@
+{
+  "object" : {
+    "artifacts" : [
+      {
+        "kind" : {
+          "xcframework" : {
+
+          }
+        },
+        "packageRef" : {
+          "identity" : "macos",
+          "kind" : "root",
+          "location" : "/Users/hanny/Works/tadev/lantaran/apps/macos",
+          "name" : "macos"
+        },
+        "path" : "/Users/hanny/Works/tadev/lantaran/apps/macos/Frameworks/LantaranFFI.xcframework",
+        "source" : {
+          "type" : "local"
+        },
+        "targetName" : "LantaranFFI"
+      }
+    ],
+    "dependencies" : [
+
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}

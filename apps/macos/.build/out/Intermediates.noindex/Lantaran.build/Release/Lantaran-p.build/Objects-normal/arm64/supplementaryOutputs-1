@@ -1,0 +1,11 @@
+{
+  "/Users/hanny/Works/tadev/lantaran/apps/macos/Sources/Lantaran/AppModel.swift" : {
+    "abi-baseline-json" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/Lantaran-p.build/Objects-normal/arm64/Lantaran.abi.json",
+    "const-values" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/Lantaran-p.build/Objects-normal/arm64/Lantaran-primary.swiftconstvalues",
+    "dependencies" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/Lantaran-p.build/Objects-normal/arm64/Lantaran-primary.d",
+    "diagnostics" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/Lantaran-p.build/Objects-normal/arm64/Lantaran-primary.dia",
+    "swiftdoc" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/Lantaran-p.build/Objects-normal/arm64/Lantaran.swiftdoc",
+    "swiftmodule" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/Lantaran-p.build/Objects-normal/arm64/Lantaran.swiftmodule",
+    "swiftsourceinfo" : "/Users/hanny/Works/tadev/lantaran/apps/macos/.build/out/Intermediates.noindex/Lantaran.build/Release/Lantaran-p.build/Objects-normal/arm64/Lantaran.swiftsourceinfo"
+  }
+}
