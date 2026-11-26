@@ -1,5 +1,7 @@
 use clap::Parser;
-use lantaran_engine::{Direction, Engine, FlowEvent, FlowId, Headers, RootCa, SslProxyingList};
+use lantaran_engine::{
+    Direction, Engine, EventStream, FlowEvent, FlowId, Headers, RootCa, SslProxyingList,
+};
 use std::{
     error::Error,
     net::{IpAddr, SocketAddr, UdpSocket},
@@ -7,7 +9,7 @@ use std::{
     process::ExitCode,
     sync::Arc,
 };
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::net::TcpListener;
 
 /// Capture HTTP and HTTPS traffic from iOS and Android devices.
 #[derive(Parser)]
@@ -90,12 +92,22 @@ async fn run(args: Args) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn print_events(
-    engine: Arc<Engine>,
-    mut events: mpsc::UnboundedReceiver<FlowEvent>,
-    verbose: bool,
-) {
-    while let Some(event) = events.recv().await {
+async fn print_events(engine: Arc<Engine>, mut events: EventStream, verbose: bool) {
+    while let Some(batch) = events.next_batch().await {
+        if batch.dropped > 0 {
+            println!(
+                "({} events were dropped because the terminal could not keep up)",
+                batch.dropped
+            );
+        }
+        for event in batch.events {
+            print_event(&engine, event, verbose).await;
+        }
+    }
+}
+
+async fn print_event(engine: &Engine, event: FlowEvent, verbose: bool) {
+    {
         match event {
             FlowEvent::Request {
                 id,
@@ -139,8 +151,8 @@ async fn print_events(
                     duration.as_millis()
                 );
                 if verbose {
-                    print_body(&engine, id, Direction::Request).await;
-                    print_body(&engine, id, Direction::Response).await;
+                    print_body(engine, id, Direction::Request).await;
+                    print_body(engine, id, Direction::Response).await;
                 }
             }
             FlowEvent::Failed { id, error } => println!("#{id} failed: {}", printable(&error)),

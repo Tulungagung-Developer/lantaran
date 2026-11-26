@@ -75,6 +75,12 @@ up to a limit (5 MB by default), and is fetched afterwards by flow id with
 `Engine::body`. `CapturedBody::decoded` undoes `Content-Encoding` for display;
 the client always receives the original bytes.
 
+Events are delivered in batches from an `EventStream` (up to 500 events, after
+waiting at most 50 ms for more). The queue behind it holds at most 100,000
+events; when a reader falls that far behind, new events are dropped and the
+next batch says how many. Kept bodies share a memory budget (256 MB by
+default) and the oldest are dropped first. Forwarding never waits on either.
+
 ## References
 
 - [Rockxy](https://github.com/RockxyApp/Rockxy) (AGPL-3.0-or-later): native macOS

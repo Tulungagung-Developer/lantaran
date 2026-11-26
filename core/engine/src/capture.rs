@@ -17,11 +17,11 @@ use hudsucker::{
     },
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     task::{Context, Poll},
     time::Instant,
@@ -49,25 +49,74 @@ impl FlowTracker {
     }
 }
 
-/// Captured bodies, by flow and direction.
-#[derive(Default)]
+/// Captured bodies, by flow and direction, within a memory budget. When the
+/// budget is exceeded the oldest bodies are dropped first.
 pub(crate) struct BodyStore {
-    bodies: Mutex<HashMap<(FlowId, Direction), CapturedBody>>,
+    inner: Mutex<StoreInner>,
+    budget: AtomicUsize,
+}
+
+#[derive(Default)]
+struct StoreInner {
+    bodies: HashMap<(FlowId, Direction), CapturedBody>,
+    order: VecDeque<(FlowId, Direction)>,
+    total: usize,
 }
 
 impl BodyStore {
+    pub(crate) fn new(budget: usize) -> Self {
+        Self {
+            inner: Mutex::default(),
+            budget: AtomicUsize::new(budget),
+        }
+    }
+
     pub(crate) fn get(&self, id: FlowId, direction: Direction) -> Option<CapturedBody> {
-        self.lock().get(&(id, direction)).cloned()
+        self.lock().bodies.get(&(id, direction)).cloned()
+    }
+
+    pub(crate) fn set_budget(&self, bytes: usize) {
+        self.budget.store(bytes, Ordering::Relaxed);
+        self.lock().evict(bytes);
+    }
+
+    /// Bytes currently held.
+    #[cfg(test)]
+    fn total(&self) -> usize {
+        self.lock().total
     }
 
     fn insert(&self, id: FlowId, direction: Direction, body: CapturedBody) {
-        self.lock().insert((id, direction), body);
+        let budget = self.budget.load(Ordering::Relaxed);
+        let mut inner = self.lock();
+        let key = (id, direction);
+
+        inner.total += body.bytes.len();
+        if let Some(old) = inner.bodies.insert(key, body) {
+            inner.total -= old.bytes.len();
+        } else {
+            inner.order.push_back(key);
+        }
+        inner.evict(budget);
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(FlowId, Direction), CapturedBody>> {
-        self.bodies
+    fn lock(&self) -> std::sync::MutexGuard<'_, StoreInner> {
+        self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl StoreInner {
+    fn evict(&mut self, budget: usize) {
+        while self.total > budget {
+            let Some(key) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(body) = self.bodies.remove(&key) {
+                self.total -= body.bytes.len();
+            }
+        }
     }
 }
 
@@ -259,4 +308,53 @@ pub(crate) fn describe(err: &(dyn std::error::Error + 'static)) -> String {
         source = cause.source();
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(len: usize) -> CapturedBody {
+        CapturedBody {
+            bytes: Bytes::from(vec![0; len]),
+            size: len as u64,
+            truncated: false,
+            incomplete: false,
+            content_encoding: None,
+        }
+    }
+
+    #[test]
+    fn oldest_bodies_are_dropped_to_stay_within_the_budget() {
+        let store = BodyStore::new(250);
+        for id in 1..=5 {
+            store.insert(id, Direction::Response, body(100));
+        }
+
+        assert_eq!(store.total(), 200);
+        assert!(store.get(3, Direction::Response).is_none());
+        assert!(store.get(4, Direction::Response).is_some());
+        assert!(store.get(5, Direction::Response).is_some());
+    }
+
+    #[test]
+    fn lowering_the_budget_drops_bodies_at_once() {
+        let store = BodyStore::new(1_000);
+        for id in 1..=5 {
+            store.insert(id, Direction::Request, body(100));
+        }
+
+        store.set_budget(100);
+        assert_eq!(store.total(), 100);
+        assert!(store.get(5, Direction::Request).is_some());
+    }
+
+    #[test]
+    fn replacing_a_body_does_not_count_it_twice() {
+        let store = BodyStore::new(1_000);
+        store.insert(1, Direction::Request, body(100));
+        store.insert(1, Direction::Request, body(40));
+
+        assert_eq!(store.total(), 40);
+    }
 }

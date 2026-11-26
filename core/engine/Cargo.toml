@@ -14,7 +14,7 @@ hudsucker.workspace = true
 http-body-util.workspace = true
 thiserror.workspace = true
 time.workspace = true
-tokio = { workspace = true, features = ["net", "sync", "rt"] }
+tokio = { workspace = true, features = ["macros", "net", "sync", "rt", "time"] }
 
 [dev-dependencies]
 flate2 = "1"

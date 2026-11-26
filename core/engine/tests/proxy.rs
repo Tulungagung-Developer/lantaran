@@ -3,13 +3,15 @@
 
 use flate2::{Compression, write::GzEncoder};
 use lantaran_engine::{
-    CapturedBody, Direction, Engine, FlowEvent, MAX_DECODED_SIZE, RootCa, SslProxyingList,
+    CapturedBody, Direction, Engine, EventStream, FlowEvent, MAX_DECODED_SIZE, RootCa,
+    SslProxyingList,
 };
-use std::{future::pending, io::Write, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::VecDeque, future::pending, io::Write, net::SocketAddr, sync::Arc, time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::mpsc::UnboundedReceiver,
     time::timeout,
 };
 
@@ -49,8 +51,24 @@ async fn start_fixed_origin(response: Vec<u8>) -> SocketAddr {
 
 struct Proxy {
     addr: SocketAddr,
-    events: UnboundedReceiver<FlowEvent>,
+    events: Events,
     engine: Arc<Engine>,
+}
+
+/// Hands out events one at a time from the engine's batches.
+struct Events {
+    stream: EventStream,
+    pending: VecDeque<FlowEvent>,
+}
+
+impl Events {
+    fn try_recv(&mut self) -> Option<FlowEvent> {
+        if let Some(event) = self.pending.pop_front() {
+            return Some(event);
+        }
+        self.pending.extend(self.stream.try_next_batch()?.events);
+        self.pending.pop_front()
+    }
 }
 
 async fn start_proxy(ssl_proxying: SslProxyingList) -> Proxy {
@@ -66,7 +84,10 @@ async fn start_proxy(ssl_proxying: SslProxyingList) -> Proxy {
 
     Proxy {
         addr,
-        events,
+        events: Events {
+            stream: events,
+            pending: VecDeque::new(),
+        },
         engine,
     }
 }
@@ -121,8 +142,15 @@ async fn send(proxy: SocketAddr, request: String) -> String {
     String::from_utf8_lossy(&read_to_end(&mut client).await).into_owned()
 }
 
-async fn next_event(events: &mut UnboundedReceiver<FlowEvent>) -> FlowEvent {
-    timeout(WAIT, events.recv()).await.unwrap().unwrap()
+async fn next_event(events: &mut Events) -> FlowEvent {
+    while events.pending.is_empty() {
+        let batch = timeout(WAIT, events.stream.next_batch())
+            .await
+            .expect("no event arrived")
+            .expect("the event stream ended");
+        events.pending.extend(batch.events);
+    }
+    events.pending.pop_front().unwrap()
 }
 
 fn get(origin: SocketAddr, path: &str) -> String {
@@ -435,6 +463,38 @@ async fn body_is_forwarded_as_it_arrives() {
 }
 
 #[tokio::test]
+async fn old_bodies_are_dropped_to_stay_within_the_budget() {
+    let origin = start_origin(|mut stream| async move {
+        read_request(&mut stream).await;
+        let body = vec![b'x'; 1_000];
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        stream.write_all(&body).await.unwrap();
+    })
+    .await;
+    let mut proxy = start_proxy(SslProxyingList::new()).await;
+    proxy.engine.set_body_budget(2_500);
+
+    let mut ids = Vec::new();
+    for _ in 0..4 {
+        send(proxy.addr, get(origin, "/")).await;
+        let FlowEvent::Request { id, .. } = next_event(&mut proxy.events).await else {
+            panic!("expected a request event");
+        };
+        next_event(&mut proxy.events).await;
+        next_event(&mut proxy.events).await;
+        ids.push(id);
+    }
+
+    assert!(proxy.engine.body(ids[0], Direction::Response).is_none());
+    assert!(proxy.engine.body(ids[1], Direction::Response).is_none());
+    assert!(proxy.engine.body(ids[2], Direction::Response).is_some());
+    assert!(proxy.engine.body(ids[3], Direction::Response).is_some());
+}
+
+#[tokio::test]
 async fn connect_to_an_unlisted_host_is_tunnelled_unread() {
     let origin = start_fixed_origin(
         b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".to_vec(),
@@ -516,7 +576,7 @@ async fn request_aimed_at_the_proxy_itself_gets_a_notice() {
         "unexpected reply: {reply}"
     );
     assert!(
-        proxy.events.try_recv().is_err(),
+        proxy.events.try_recv().is_none(),
         "a request to the proxy itself is not a captured flow"
     );
 }
