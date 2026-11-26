@@ -13,6 +13,7 @@ mod flow;
 mod guard;
 
 pub use ca::RootCa;
+pub use capture::MAX_DECODED_SIZE;
 pub use engine::{DEFAULT_BODY_LIMIT, Engine};
 pub use error::Error;
 pub use flow::{CapturedBody, Direction, FlowEvent, FlowId, Headers};

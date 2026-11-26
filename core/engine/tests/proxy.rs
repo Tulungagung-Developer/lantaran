@@ -2,7 +2,9 @@
 //! upstream server so the tests need no network.
 
 use flate2::{Compression, write::GzEncoder};
-use lantaran_engine::{Direction, Engine, FlowEvent, RootCa, SslProxyingList};
+use lantaran_engine::{
+    CapturedBody, Direction, Engine, FlowEvent, MAX_DECODED_SIZE, RootCa, SslProxyingList,
+};
 use std::{future::pending, io::Write, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -301,6 +303,21 @@ async fn compressed_response_reaches_the_client_compressed_and_decodes_for_displ
     assert_eq!(&body.bytes[..], &compressed[..]);
     assert_eq!(body.content_encoding.as_deref(), Some("gzip"));
     assert_eq!(&body.decoded().await.unwrap()[..], text.as_bytes());
+}
+
+#[tokio::test]
+async fn decoding_stops_at_the_size_limit() {
+    // A few kilobytes of gzip that would inflate past the limit.
+    let bomb = gzip(&vec![0; MAX_DECODED_SIZE + 1]);
+    let body = CapturedBody {
+        size: bomb.len() as u64,
+        bytes: bomb.into(),
+        truncated: false,
+        incomplete: false,
+        content_encoding: Some("gzip".to_owned()),
+    };
+
+    assert!(body.decoded().await.is_err());
 }
 
 #[tokio::test]

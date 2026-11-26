@@ -7,7 +7,7 @@
 
 use crate::{CapturedBody, Direction, Error, FlowEvent, FlowId};
 use bytes::{Bytes, BytesMut};
-use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use http_body_util::{BodyExt, Full, Limited, combinators::BoxBody};
 use hudsucker::{
     Body,
     hyper::{
@@ -26,6 +26,10 @@ use std::{
     task::{Context, Poll},
     time::Instant,
 };
+
+/// The most a body may grow to when decoded for display. A few kilobytes of
+/// compressed data can expand to gigabytes, so decoding stops here.
+pub const MAX_DECODED_SIZE: usize = 64 * 1024 * 1024;
 
 /// What a flow's two bodies share: when it started and how big the request
 /// body turned out to be, which the response side reports.
@@ -223,8 +227,9 @@ impl<S: TapSink> Drop for Tap<S> {
 impl CapturedBody {
     /// The body with its `Content-Encoding` undone, for display.
     ///
-    /// Fails when the encoding is unknown, or when the captured bytes are not
-    /// a complete compressed stream, as happens when the body was truncated.
+    /// Fails when the encoding is unknown, when the captured bytes are not a
+    /// complete compressed stream (as happens when the body was truncated), or
+    /// when the result would exceed [`MAX_DECODED_SIZE`].
     pub async fn decoded(&self) -> Result<Bytes, Error> {
         let Some(encoding) = &self.content_encoding else {
             return Ok(self.bytes.clone());
@@ -237,8 +242,7 @@ impl CapturedBody {
         );
 
         let decoded = hudsucker::decode_response(message).map_err(|_| Error::Decode)?;
-        let collected = decoded
-            .into_body()
+        let collected = Limited::new(decoded.into_body(), MAX_DECODED_SIZE)
             .collect()
             .await
             .map_err(|_| Error::Decode)?;

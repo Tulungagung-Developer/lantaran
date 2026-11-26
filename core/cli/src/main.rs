@@ -106,7 +106,12 @@ async fn print_events(
                 headers,
                 ..
             } => {
-                println!("#{id} {method} {url}  (from {})", client.ip());
+                println!(
+                    "#{id} {} {}  (from {})",
+                    printable(&method),
+                    printable(&url),
+                    client.ip()
+                );
                 if verbose {
                     print_headers(&version, &headers);
                 }
@@ -138,7 +143,7 @@ async fn print_events(
                     print_body(&engine, id, Direction::Response).await;
                 }
             }
-            FlowEvent::Failed { id, error } => println!("#{id} failed: {error}"),
+            FlowEvent::Failed { id, error } => println!("#{id} failed: {}", printable(&error)),
             FlowEvent::Tunnel {
                 id,
                 client,
@@ -154,7 +159,7 @@ async fn print_events(
 fn print_headers(version: &str, headers: &Headers) {
     println!("    {version}");
     for (name, value) in headers {
-        println!("    {name}: {value}");
+        println!("    {}: {}", printable(name), printable(value));
     }
 }
 
@@ -186,10 +191,27 @@ async fn print_body(engine: &Engine, id: FlowId, direction: Direction) {
             } else {
                 ""
             };
-            println!("    {label}: {}{more}", preview.replace('\n', "\n    "));
+            let lines: Vec<String> = preview.lines().map(printable).collect();
+            println!("    {label}: {}{more}", lines.join("\n    "));
         }
         Err(_) => println!("    {label}: {} bytes of binary data", body.size),
     }
+}
+
+/// Text from a device, made safe for a terminal: control characters such as
+/// escape sequences are shown escaped instead of being acted on.
+fn printable(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            let keep = !c.is_control() || c == '\t';
+            let shown: Vec<char> = if keep {
+                vec![c]
+            } else {
+                c.escape_default().collect()
+            };
+            shown
+        })
+        .collect()
 }
 
 /// The address to type into a phone. A wildcard listen address is replaced by
@@ -210,4 +232,17 @@ fn local_network_ip() -> Option<IpAddr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("192.0.2.1:9").ok()?;
     Some(socket.local_addr().ok()?.ip())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::printable;
+
+    #[test]
+    fn control_characters_are_escaped() {
+        assert_eq!(printable("ok\u{1b}[2Jgone"), "ok\\u{1b}[2Jgone");
+        assert_eq!(printable("bell\u{7}"), "bell\\u{7}");
+        assert_eq!(printable("tab\tstays"), "tab\tstays");
+        assert_eq!(printable("plain text"), "plain text");
+    }
 }
