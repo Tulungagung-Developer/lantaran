@@ -60,6 +60,22 @@ struct Flow: Identifiable {
         requestHeaders.first { $0.name.caseInsensitiveCompare("user-agent") == .orderedSame }?.value
     }
 
+    /// A WebSocket upgrade request.
+    var isWebSocket: Bool {
+        requestHeaders.contains {
+            $0.name.caseInsensitiveCompare("upgrade") == .orderedSame
+                && $0.value.localizedCaseInsensitiveContains("websocket")
+        }
+    }
+
+    /// GraphQL has no content type of its own: recognised by its usual path
+    /// or the GraphQL media types.
+    var isGraphQL: Bool {
+        path.lowercased().contains("graphql")
+            || requestContentType?.localizedCaseInsensitiveContains("graphql") == true
+            || responseContentType?.localizedCaseInsensitiveContains("graphql") == true
+    }
+
     var requestContentType: String? {
         requestHeaders.first { $0.name.caseInsensitiveCompare("content-type") == .orderedSame }?.value
     }

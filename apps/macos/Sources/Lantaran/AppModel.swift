@@ -55,6 +55,20 @@ final class AppModel {
     var filterText = "" {
         didSet { refilter() }
     }
+    var filterField = FilterField.any {
+        didSet { if !filterText.isEmpty { refilter() } }
+    }
+    var quickFilters: Set<QuickFilter> = [] {
+        didSet { refilter() }
+    }
+    /// Changed to move the keyboard focus to the filter field.
+    private(set) var focusFilterRequest = 0
+
+    func focusFilter() { focusFilterRequest += 1 }
+
+    func toggle(_ filter: QuickFilter) {
+        if quickFilters.contains(filter) { quickFilters.remove(filter) } else { quickFilters.insert(filter) }
+    }
 
     var sidebarSelection: SidebarItem? = .all {
         didSet { refilter() }
@@ -402,6 +416,8 @@ final class AppModel {
                     $0.elapsedMs = elapsedMs
                     $0.unverifiedUpstream = unverified
                 }
+                // The status and content type can change whether it passes.
+                if let index = indexByID[id], !appended.contains(index) { reconsider(index) }
             case let .completed(id, requestSize, responseSize, durationMs):
                 update(id) {
                     $0.requestSize = requestSize
@@ -459,6 +475,23 @@ final class AppModel {
         revision += 1
     }
 
+    /// Adds or removes one row after the flow changed, keeping `visible` in
+    /// arrival order.
+    private func reconsider(_ index: Int) {
+        let passes = passesFilter(flows[index])
+        var low = 0, high = visible.count
+        while low < high {
+            let mid = (low + high) / 2
+            if visible[mid] < index { low = mid + 1 } else { high = mid }
+        }
+        let present = low < visible.count && visible[low] == index
+        if passes && !present {
+            visible.insert(index, at: low)
+        } else if !passes && present {
+            visible.remove(at: low)
+        }
+    }
+
     private func passesFilter(_ flow: Flow) -> Bool {
         switch sidebarSelection {
         case .device(let device) where flow.device != device:
@@ -472,11 +505,25 @@ final class AppModel {
             return false
         default: break
         }
+        if !quickFilters.isEmpty && !quickFilters.contains(where: { $0.matches(flow) }) {
+            return false
+        }
         let text = filterText.trimmingCharacters(in: .whitespaces)
         if text.isEmpty { return true }
-        return flow.url.localizedCaseInsensitiveContains(text)
-            || flow.method.localizedCaseInsensitiveContains(text)
-            || (flow.status.map { String($0).hasPrefix(text) } ?? false)
+        let status = flow.status.map { String($0).hasPrefix(text) } ?? false
+        switch filterField {
+        case .any:
+            return flow.url.localizedCaseInsensitiveContains(text)
+                || flow.method.localizedCaseInsensitiveContains(text)
+                || status
+        case .url: return flow.url.localizedCaseInsensitiveContains(text)
+        case .method: return flow.method.localizedCaseInsensitiveContains(text)
+        case .status: return status
+        case .header:
+            return (flow.requestHeaders + flow.responseHeaders).contains {
+                "\($0.name): \($0.value)".localizedCaseInsensitiveContains(text)
+            }
+        }
     }
 
     // MARK: Where flows come from

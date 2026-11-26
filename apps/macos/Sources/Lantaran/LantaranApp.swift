@@ -21,6 +21,10 @@ struct LantaranApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             }
+            CommandGroup(after: .textEditing) {
+                Button("Filter Requests") { model.focusFilter() }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+            }
             CommandMenu("Certificate") {
                 Button("Connect a Device…") { model.showConnectDevice = true }
                     .keyboardShortcut("d", modifiers: [.command, .shift])

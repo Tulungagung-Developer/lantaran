@@ -15,15 +15,18 @@ struct ContentView: View {
                     ErrorBanner(message: error)
                 }
                 VSplitView {
-                    TrafficTable()
-                        .frame(maxWidth: .infinity, minHeight: 160, maxHeight: .infinity)
+                    VStack(spacing: 0) {
+                        FilterBar()
+                        Divider()
+                        TrafficTable()
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 160, maxHeight: .infinity)
                     InspectorView()
                         .frame(maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
                 }
                 StatusBar()
             }
         }
-        .searchable(text: $model.filterText, placement: .toolbar, prompt: "Filter URL, method or status")
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
