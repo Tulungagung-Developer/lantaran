@@ -1,0 +1,8 @@
+[package]
+name = "lantaran-rules"
+description = "Matching rules for the Lantaran proxy: which hosts get decrypted, and later map, block and breakpoint rules"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true

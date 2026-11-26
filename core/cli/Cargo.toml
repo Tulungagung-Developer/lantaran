@@ -1,0 +1,19 @@
+[package]
+name = "lantaran-cli"
+description = "Headless Lantaran proxy that prints captured flows to the terminal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "lantaran"
+path = "src/main.rs"
+
+[dependencies]
+lantaran-engine.workspace = true
+lantaran-rules.workspace = true
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "signal"] }

@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["engine", "rules", "cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/Tulungagung-Developer/lantaran"
+
+[workspace.dependencies]
+lantaran-engine = { path = "engine" }
+lantaran-rules = { path = "rules" }
+hudsucker = { version = "0.25", features = ["http2"] }
+thiserror = "2"
+time = "0.3"
+tokio = "1"
