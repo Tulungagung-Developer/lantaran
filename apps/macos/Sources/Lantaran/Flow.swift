@@ -27,6 +27,15 @@ struct Flow: Identifiable {
     var responseSize: UInt64?
     var error: String?
     var unverifiedUpstream = false
+    /// Set when Map Local or Map Remote changed this flow.
+    var mapping: String?
+
+    var mappingKind: String? {
+        guard let mapping else { return nil }
+        if mapping.hasPrefix("Map Local") { return "Local" }
+        if mapping.hasPrefix("Map Remote") { return "Remote" }
+        return "Edited"
+    }
 
     var state: State {
         if error != nil { return .failed }

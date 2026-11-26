@@ -20,31 +20,10 @@ impl HostPattern {
     }
 
     pub fn matches(&self, host: &str) -> bool {
-        let pattern = self.pattern.as_bytes();
-        let host = host.as_bytes();
-
-        let (mut p, mut h) = (0, 0);
-        // Position of the last `*` seen, and the host position it was tried at.
-        let mut backtrack: Option<(usize, usize)> = None;
-
-        while h < host.len() {
-            if p < pattern.len() && pattern[p] == b'*' {
-                backtrack = Some((p, h));
-                p += 1;
-            } else if p < pattern.len() && pattern[p] == host[h].to_ascii_lowercase() {
-                p += 1;
-                h += 1;
-            } else if let Some((star, tried)) = backtrack {
-                // Let the last `*` swallow one more character and retry.
-                backtrack = Some((star, tried + 1));
-                p = star + 1;
-                h = tried + 1;
-            } else {
-                return false;
-            }
-        }
-
-        pattern[p..].iter().all(|&b| b == b'*')
+        crate::glob::glob_match(
+            self.pattern.as_bytes(),
+            host.to_ascii_lowercase().as_bytes(),
+        )
     }
 }
 

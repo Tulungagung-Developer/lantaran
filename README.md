@@ -14,8 +14,9 @@ Early. The engine, a command line tool and a first macOS app work.
 | --- | --- |
 | HTTP proxy, HTTP/1.1 and HTTP/2 | WebSocket frames |
 | HTTPS decryption for the hosts you list | Guided iOS and Android setup |
-| Untouched tunnelling for every other host | Map Local and Map Remote |
+| Untouched tunnelling for every other host | Breakpoints |
 | macOS app: traffic table, inspector, SSL proxying list | |
+| Map Local and Map Remote | |
 | Headers and bodies, decoded for display (`--verbose`) | |
 | Certificate download page and QR code | |
 | Root certificate created on first run | |
@@ -79,6 +80,18 @@ Without `--listen`, Lantaran accepts connections from this machine only, which
 is enough for `curl` and the iOS simulator. Listening on `0.0.0.0` lets every
 device on the network use the proxy, so do that on networks you trust. Requests
 from other devices to this machine's loopback addresses are always refused.
+
+Map Local answers matching requests from a file, read fresh on every request;
+Map Remote sends them to another server. Both work on readable traffic (plain
+HTTP, or HTTPS for hosts passed with `--ssl`):
+
+```sh
+lantaran --ssl api.example.com \
+  --map-local 'https://api.example.com/v1/users*=./users.json' \
+  --map-remote 'https://api.example.com/*=http://localhost:3000'
+```
+
+In the app they are under **Tools**, or right-click a request.
 
 Only hosts passed with `--ssl` are decrypted. When decrypting, Lantaran checks the
 server's certificate against the public roots and every certificate authority

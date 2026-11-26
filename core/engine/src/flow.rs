@@ -56,6 +56,11 @@ pub enum FlowEvent {
     /// The flow with this id ended without a complete response.
     Failed { id: FlowId, error: String },
 
+    /// A rule changed the flow with this id: Map Local answered it from a
+    /// file, or Map Remote sent it somewhere else. Arrives right after
+    /// `Request`, whose URL is the one the client asked for.
+    Rewritten { id: FlowId, description: String },
+
     /// An HTTPS connection to a host that is not being decrypted. Its content
     /// passes through unread.
     Tunnel {

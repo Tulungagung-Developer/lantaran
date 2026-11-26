@@ -46,6 +46,10 @@ private struct FlowHeader: View {
             } else {
                 Badge(text: "ACTIVE", color: .yellow)
             }
+            if let mapping = flow.mapping, let kind = flow.mappingKind {
+                Badge(text: "MAP \(kind.uppercased())", color: .purple)
+                    .help(mapping)
+            }
             if flow.unverifiedUpstream {
                 Badge(text: "CERTIFICATE NOT CHECKED", color: .orange)
                     .help("This host is exempt from server certificate checks.")

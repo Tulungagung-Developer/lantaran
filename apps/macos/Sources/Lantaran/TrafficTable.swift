@@ -35,6 +35,10 @@ struct TrafficTable: NSViewRepresentable {
         table.delegate = context.coordinator
         context.coordinator.table = table
 
+        let menu = NSMenu()
+        menu.delegate = context.coordinator
+        table.menu = menu
+
         let scroll = NSScrollView()
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -51,7 +55,7 @@ struct TrafficTable: NSViewRepresentable {
     }
 
     enum Column: String, CaseIterable {
-        case state, id, url, client, method, status, code, time, duration, request, response
+        case state, id, url, client, method, status, code, time, duration, request, response, edited
 
         var identifier: NSUserInterfaceItemIdentifier { .init(rawValue) }
 
@@ -68,6 +72,7 @@ struct TrafficTable: NSViewRepresentable {
             case .duration: "Duration"
             case .request: "Request"
             case .response: "Response"
+            case .edited: "Edited"
             }
         }
 
@@ -84,12 +89,13 @@ struct TrafficTable: NSViewRepresentable {
             case .duration: 72
             case .request: 70
             case .response: 80
+            case .edited: 60
             }
         }
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         let model: AppModel
         weak var table: NSTableView?
         private var shownRevision = -1
@@ -126,6 +132,64 @@ struct TrafficTable: NSViewRepresentable {
                 table.selectRowIndexes(wanted, byExtendingSelection: false)
                 settingSelection = false
             }
+        }
+
+        // MARK: Context menu
+
+        func menuNeedsUpdate(_ menu: NSMenu) {
+            menu.removeAllItems()
+            guard let table, table.clickedRow >= 0, table.clickedRow < model.visible.count else { return }
+            let flow = model.flows[model.visible[table.clickedRow]]
+
+            func add(_ title: String, _ action: Selector, enabled: Bool = true) {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = self
+                item.representedObject = flow.id
+                item.isEnabled = enabled
+                menu.addItem(item)
+            }
+
+            add("Copy URL", #selector(copyURL(_:)))
+            add("Copy as cURL", #selector(copyCurl(_:)), enabled: !flow.isTunnel)
+            menu.addItem(.separator())
+            if flow.isTunnel {
+                add(model.isDecrypted(flow.host) ? "SSL Proxying Enabled for \(flow.host)" : "Enable SSL Proxying for \(flow.host)",
+                    #selector(enableSSL(_:)), enabled: !model.isDecrypted(flow.host))
+            } else {
+                add("Map Local…", #selector(mapLocal(_:)), enabled: flow.status != nil)
+                add("Map Remote…", #selector(mapRemote(_:)))
+            }
+        }
+
+        private func flow(for sender: NSMenuItem) -> Flow? {
+            model.flow(withID: sender.representedObject as? UInt64)
+        }
+
+        @objc private func copyURL(_ sender: NSMenuItem) {
+            guard let flow = flow(for: sender) else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(flow.url, forType: .string)
+        }
+
+        @objc private func copyCurl(_ sender: NSMenuItem) {
+            guard let flow = flow(for: sender) else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(Curl.command(for: flow, body: model.body(of: flow, response: false)?.data), forType: .string)
+        }
+
+        @objc private func enableSSL(_ sender: NSMenuItem) {
+            guard let flow = flow(for: sender) else { return }
+            model.enableSSL(for: flow.host)
+        }
+
+        @objc private func mapLocal(_ sender: NSMenuItem) {
+            guard let flow = flow(for: sender) else { return }
+            model.startMapLocal(from: flow)
+        }
+
+        @objc private func mapRemote(_ sender: NSMenuItem) {
+            guard let flow = flow(for: sender) else { return }
+            model.startMapRemote(from: flow)
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
@@ -207,6 +271,7 @@ struct TrafficTable: NSViewRepresentable {
             case .duration: return flow.durationMs.map(duration) ?? "-"
             case .request: return flow.requestSize.map(size) ?? "-"
             case .response: return flow.responseSize.map(size) ?? "-"
+            case .edited: return flow.mappingKind ?? ""
             }
         }
 
@@ -214,8 +279,15 @@ struct TrafficTable: NSViewRepresentable {
             ms < 1000 ? String(format: "%.0f ms", ms) : String(format: "%.2f s", ms / 1000)
         }
 
+        private static let sizeFormat: ByteCountFormatter = {
+            let formatter = ByteCountFormatter()
+            formatter.countStyle = .file
+            formatter.allowsNonnumericFormatting = false
+            return formatter
+        }()
+
         static func size(_ bytes: UInt64) -> String {
-            ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+            sizeFormat.string(fromByteCount: Int64(bytes))
         }
 
         private static func color(for state: Flow.State) -> NSColor {

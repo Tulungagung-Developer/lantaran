@@ -56,6 +56,24 @@ struct ContentView: View {
         }
         .sheet(isPresented: $model.showConnectDevice) { ConnectDeviceSheet() }
         .sheet(isPresented: $model.showSSLProxying) { SSLProxyingSheet() }
+        .sheet(isPresented: $model.showMapLocal) {
+            MapLocalSheet()
+                .sheet(item: $model.editingLocalRule) { LocalRuleEditor(rule: $0) }
+                .sheet(item: $model.editingRemoteRule) { RemoteRuleEditor(rule: $0) }
+        }
+        .sheet(isPresented: $model.showMapRemote) {
+            MapRemoteSheet()
+                .sheet(item: $model.editingLocalRule) { LocalRuleEditor(rule: $0) }
+                .sheet(item: $model.editingRemoteRule) { RemoteRuleEditor(rule: $0) }
+        }
+        .sheet(item: Binding(
+            get: { model.showMapLocal || model.showMapRemote ? nil : model.editingLocalRule },
+            set: { model.editingLocalRule = $0 }
+        )) { LocalRuleEditor(rule: $0) }
+        .sheet(item: Binding(
+            get: { model.showMapLocal || model.showMapRemote ? nil : model.editingRemoteRule },
+            set: { model.editingRemoteRule = $0 }
+        )) { RemoteRuleEditor(rule: $0) }
     }
 }
 

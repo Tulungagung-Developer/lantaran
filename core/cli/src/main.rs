@@ -1,7 +1,7 @@
 use clap::Parser;
 use lantaran_engine::{
-    Direction, Engine, EventStream, FlowEvent, FlowId, Headers, HostPattern, ONBOARDING_HOST,
-    RootCa, SslProxyingList, local_network_address,
+    Direction, Engine, EventStream, FlowEvent, FlowId, Headers, HostPattern, MapLocal, MapRemote,
+    MapRules, ONBOARDING_HOST, RootCa, SslProxyingList, UrlPattern, local_network_address,
 };
 use std::{
     error::Error,
@@ -32,6 +32,18 @@ struct Args {
     /// patterns as --ssl and can be repeated.
     #[arg(long = "insecure-host", value_name = "HOST")]
     insecure_hosts: Vec<String>,
+
+    /// Answer matching requests from a file: PATTERN=FILE, for example
+    /// 'https://api.example.com/v1/users*=./users.json'. Can be repeated.
+    #[arg(long = "map-local", value_name = "PATTERN=FILE")]
+    map_local: Vec<String>,
+
+    /// Send matching requests elsewhere: PATTERN=URL, for example
+    /// 'https://api.example.com/*=http://localhost:3000'. The URL's scheme,
+    /// host, port and path replace the request's; a path of "/" keeps the
+    /// original path. Can be repeated.
+    #[arg(long = "map-remote", value_name = "PATTERN=URL")]
+    map_remote: Vec<String>,
 
     /// Directory that holds the root certificate and its key.
     #[arg(long, value_name = "DIR")]
@@ -109,7 +121,16 @@ async fn run(args: Args) -> Result<(), Box<dyn Error>> {
         );
     }
 
+    let map_rules = map_rules(&args.map_local, &args.map_remote)?;
+    for rule in &map_rules.local {
+        println!("Map Local: {} -> {}", rule.pattern.as_str(), rule.file);
+    }
+    for rule in &args.map_remote {
+        println!("Map Remote: {}", rule.replacen('=', " -> ", 1));
+    }
+
     let (engine, events) = Engine::new(ca, ssl_proxying);
+    engine.set_map_rules(map_rules);
     engine.set_exempt_hosts(
         args.insecure_hosts
             .iter()
@@ -197,6 +218,9 @@ async fn print_event(engine: &Engine, event: FlowEvent, verbose: bool) {
                 }
             }
             FlowEvent::Failed { id, error } => println!("#{id} failed: {}", printable(&error)),
+            FlowEvent::Rewritten { id, description } => {
+                println!("#{id} {}", printable(&description))
+            }
             FlowEvent::Tunnel {
                 id,
                 client,
@@ -251,6 +275,67 @@ async fn print_body(engine: &Engine, id: FlowId, direction: Direction) {
     }
 }
 
+/// Parses the --map-local and --map-remote arguments.
+fn map_rules(local: &[String], remote: &[String]) -> Result<MapRules, String> {
+    let split = |arg: &String, flag: &str| {
+        arg.split_once('=')
+            .map(|(pattern, target)| (pattern.trim().to_owned(), target.trim().to_owned()))
+            .filter(|(pattern, target)| !pattern.is_empty() && !target.is_empty())
+            .ok_or_else(|| format!("{flag} expects PATTERN=TARGET, got {arg}"))
+    };
+
+    let local = local
+        .iter()
+        .map(|arg| {
+            let (pattern, file) = split(arg, "--map-local")?;
+            Ok(MapLocal {
+                pattern: UrlPattern::new(pattern),
+                method: None,
+                file,
+                status: 200,
+                content_type: None,
+            })
+        })
+        .collect::<Result<_, String>>()?;
+
+    let remote = remote
+        .iter()
+        .map(|arg| {
+            let (pattern, target) = split(arg, "--map-remote")?;
+            let (scheme, rest) = target
+                .split_once("://")
+                .ok_or_else(|| format!("--map-remote target must be a URL, got {target}"))?;
+            let (authority, path) = match rest.find('/') {
+                Some(slash) => (&rest[..slash], &rest[slash..]),
+                None => (rest, "/"),
+            };
+            let (host, port) = match authority.rsplit_once(':') {
+                Some((host, port)) if !host.ends_with(']') || authority.starts_with('[') => {
+                    match port.parse::<u16>() {
+                        Ok(port) => (host, Some(port)),
+                        Err(_) => (authority, None),
+                    }
+                }
+                _ => (authority, None),
+            };
+            Ok(MapRemote {
+                pattern: UrlPattern::new(pattern),
+                method: None,
+                scheme: Some(scheme.to_owned()),
+                host: Some(
+                    host.trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .to_owned(),
+                ),
+                port,
+                path: (path != "/").then(|| path.to_owned()),
+            })
+        })
+        .collect::<Result<_, String>>()?;
+
+    Ok(MapRules { local, remote })
+}
+
 /// Text from a device, made safe for a terminal: control characters such as
 /// escape sequences are shown escaped instead of being acted on.
 fn printable(text: &str) -> String {
@@ -297,6 +382,22 @@ fn advertised_addr(bound: SocketAddr) -> SocketAddr {
 #[cfg(test)]
 mod tests {
     use super::printable;
+
+    #[test]
+    fn map_arguments_are_parsed() {
+        let rules = super::map_rules(
+            &["https://api.test/users*=./users.json".to_owned()],
+            &["https://api.test/*=http://localhost:3000".to_owned()],
+        )
+        .unwrap();
+        assert_eq!(rules.local[0].file, "./users.json");
+        assert_eq!(rules.remote[0].host.as_deref(), Some("localhost"));
+        assert_eq!(rules.remote[0].port, Some(3000));
+        assert_eq!(rules.remote[0].path, None);
+
+        assert!(super::map_rules(&["no-equals".to_owned()], &[]).is_err());
+        assert!(super::map_rules(&[], &["x=not-a-url".to_owned()]).is_err());
+    }
 
     #[test]
     fn control_characters_are_escaped() {

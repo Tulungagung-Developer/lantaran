@@ -3,8 +3,8 @@
 
 use flate2::{Compression, write::GzEncoder};
 use lantaran_engine::{
-    CapturedBody, Direction, Engine, EventStream, FlowEvent, HostPattern, MAX_DECODED_SIZE, RootCa,
-    SslProxyingList,
+    CapturedBody, Direction, Engine, EventStream, FlowEvent, HostPattern, MAX_DECODED_SIZE,
+    MapLocal, MapRemote, MapRules, RootCa, SslProxyingList, UrlPattern,
 };
 use std::{
     collections::VecDeque, future::pending, io::Write, net::SocketAddr, sync::Arc, time::Duration,
@@ -639,6 +639,172 @@ async fn an_exempt_self_signed_server_is_reached_and_marked() {
     };
     assert_eq!(status, 200);
     assert!(unverified_upstream);
+}
+
+/// An address nothing listens on, so a request that reaches it fails.
+async fn closed_address() -> SocketAddr {
+    TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+}
+
+fn map_local(pattern: String, file: &std::path::Path) -> MapRules {
+    MapRules {
+        local: vec![MapLocal {
+            pattern: UrlPattern::new(pattern),
+            method: None,
+            file: file.display().to_string(),
+            status: 200,
+            content_type: None,
+        }],
+        remote: vec![],
+    }
+}
+
+#[tokio::test]
+async fn map_local_answers_from_a_file_without_reaching_the_server() {
+    let server = closed_address().await;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("users.json");
+    std::fs::write(&file, r#"{"users":["mapped"]}"#).unwrap();
+    let mut proxy = start_proxy(SslProxyingList::new()).await;
+    proxy
+        .engine
+        .set_map_rules(map_local(format!("http://{server}/api/*"), &file));
+
+    let reply = send(proxy.addr, get(server, "/api/users?page=1")).await;
+    assert!(
+        reply.starts_with("HTTP/1.1 200"),
+        "unexpected reply: {reply}"
+    );
+    assert!(
+        reply
+            .to_lowercase()
+            .contains("content-type: application/json")
+    );
+    assert!(
+        reply.ends_with(r#"{"users":["mapped"]}"#),
+        "unexpected reply: {reply}"
+    );
+
+    let FlowEvent::Request { id, url, .. } = next_event(&mut proxy.events).await else {
+        panic!("expected a request event first");
+    };
+    assert_eq!(url, format!("http://{server}/api/users?page=1"));
+    let event = next_event(&mut proxy.events).await;
+    let FlowEvent::Rewritten { description, .. } = event else {
+        panic!("expected a rewritten event, got {event:?}");
+    };
+    assert!(description.starts_with("Map Local: "), "{description}");
+    let FlowEvent::Response { status, .. } = next_event(&mut proxy.events).await else {
+        panic!("expected a response event");
+    };
+    assert_eq!(status, 200);
+    let FlowEvent::Completed { response_size, .. } = next_event(&mut proxy.events).await else {
+        panic!("expected a completed event");
+    };
+    assert_eq!(response_size, 20);
+    assert_eq!(
+        &proxy.engine.body(id, Direction::Response).unwrap().bytes[..],
+        br#"{"users":["mapped"]}"#
+    );
+}
+
+#[tokio::test]
+async fn map_local_reads_the_file_on_every_request() {
+    let server = closed_address().await;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("body.txt");
+    let proxy = start_proxy(SslProxyingList::new()).await;
+    proxy
+        .engine
+        .set_map_rules(map_local(format!("http://{server}/*"), &file));
+
+    std::fs::write(&file, "first").unwrap();
+    assert!(send(proxy.addr, get(server, "/")).await.ends_with("first"));
+    std::fs::write(&file, "second").unwrap();
+    assert!(send(proxy.addr, get(server, "/")).await.ends_with("second"));
+}
+
+#[tokio::test]
+async fn map_local_with_a_missing_file_says_so() {
+    let server = closed_address().await;
+    let dir = tempfile::tempdir().unwrap();
+    let proxy = start_proxy(SslProxyingList::new()).await;
+    proxy.engine.set_map_rules(map_local(
+        format!("http://{server}/*"),
+        &dir.path().join("missing.json"),
+    ));
+
+    let reply = send(proxy.addr, get(server, "/")).await;
+    assert!(
+        reply.starts_with("HTTP/1.1 500"),
+        "unexpected reply: {reply}"
+    );
+    assert!(
+        reply.contains("could not read"),
+        "unexpected reply: {reply}"
+    );
+}
+
+#[tokio::test]
+async fn map_remote_sends_the_request_to_another_server() {
+    let asked_for = closed_address().await;
+    let (heads, mut seen_heads) = tokio::sync::mpsc::unbounded_channel();
+    let actual = start_origin(move |mut stream| {
+        let heads = heads.clone();
+        async move {
+            let (head, _) = read_request(&mut stream).await;
+            heads.send(head).unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nstaged",
+                )
+                .await
+                .unwrap();
+        }
+    })
+    .await;
+    let mut proxy = start_proxy(SslProxyingList::new()).await;
+    proxy.engine.set_map_rules(MapRules {
+        local: vec![],
+        remote: vec![MapRemote {
+            pattern: UrlPattern::new(format!("http://{asked_for}/*")),
+            method: None,
+            scheme: None,
+            host: Some("127.0.0.1".to_owned()),
+            port: Some(actual.port()),
+            path: None,
+        }],
+    });
+
+    let reply = send(proxy.addr, get(asked_for, "/v1/items?x=1")).await;
+    assert!(reply.ends_with("staged"), "unexpected reply: {reply}");
+
+    let head = timeout(WAIT, seen_heads.recv()).await.unwrap().unwrap();
+    assert!(
+        head.starts_with("GET /v1/items?x=1 "),
+        "unexpected head: {head}"
+    );
+    assert!(
+        head.to_lowercase().contains(&format!("host: {actual}")),
+        "the Host header must follow the new server: {head}"
+    );
+
+    let FlowEvent::Request { url, .. } = next_event(&mut proxy.events).await else {
+        panic!("expected a request event first");
+    };
+    assert_eq!(url, format!("http://{asked_for}/v1/items?x=1"));
+    let event = next_event(&mut proxy.events).await;
+    let FlowEvent::Rewritten { description, .. } = event else {
+        panic!("expected a rewritten event, got {event:?}");
+    };
+    assert_eq!(
+        description,
+        format!("Map Remote: http://{actual}/v1/items?x=1")
+    );
 }
 
 #[tokio::test]
