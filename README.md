@@ -84,6 +84,21 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
+Commit messages follow the
+[Angular format](https://github.com/angular/angular/blob/main/contributing-docs/commit-message-guidelines.md),
+`<type>(<scope>): <summary>`, where the scope is the crate you changed:
+
+```
+fix(engine): report a failed TLS handshake as a flow event
+
+Show a line when a device rejects the root certificate, so a missing
+certificate no longer looks like silence.
+
+Fixes #3
+```
+
+Do not add `Co-authored-by` trailers or tool attribution lines.
+
 ## License
 
 [AGPL-3.0-or-later](LICENSE).
