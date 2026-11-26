@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["engine", "rules", "cli"]
+members = ["engine", "rules", "cli", "ffi"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,3 +21,6 @@ webpki-roots = "1"
 thiserror = "2"
 time = "0.3"
 tokio = "1"
+# Pinned to the version uniffi-bindgen-cs targets, so the Windows app can
+# share these bindings. Check its releases before moving to a newer uniffi.
+uniffi = "0.32"

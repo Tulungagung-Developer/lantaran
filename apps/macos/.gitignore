@@ -1,0 +1,6 @@
+# Produced by scripts/build-core.sh and scripts/build-app.sh.
+/.build/
+/build/
+/Frameworks/
+/Sources/LantaranCore/lantaran_ffi.swift
+/.swiftpm/

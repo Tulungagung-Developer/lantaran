@@ -1,11 +1,11 @@
 use clap::Parser;
 use lantaran_engine::{
     Direction, Engine, EventStream, FlowEvent, FlowId, Headers, HostPattern, ONBOARDING_HOST,
-    RootCa, SslProxyingList,
+    RootCa, SslProxyingList, local_network_address,
 };
 use std::{
     error::Error,
-    net::{IpAddr, SocketAddr, UdpSocket},
+    net::{IpAddr, SocketAddr},
     path::PathBuf,
     process::ExitCode,
     sync::Arc,
@@ -288,18 +288,10 @@ fn advertised_addr(bound: SocketAddr) -> SocketAddr {
     if !bound.ip().is_unspecified() {
         return bound;
     }
-    match local_network_ip() {
+    match local_network_address() {
         Some(ip) => SocketAddr::new(ip, bound.port()),
         None => bound,
     }
-}
-
-/// Finds the address of the interface used for outbound traffic. Connecting a
-/// UDP socket only selects a route; no packet is sent.
-fn local_network_ip() -> Option<IpAddr> {
-    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    socket.connect("192.0.2.1:9").ok()?;
-    Some(socket.local_addr().ok()?.ip())
 }
 
 #[cfg(test)]
