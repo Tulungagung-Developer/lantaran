@@ -6,7 +6,8 @@
 //! same interface works for Swift today and C# later.
 
 use lantaran_engine::{
-    CapturedBody, Direction, Engine, EventStream, FlowEvent, HostPattern, RootCa, SslProxyingList,
+    CapturedBody, Direction, Engine, EventStream, FlowEvent, HostPattern, MapLocal, MapRemote,
+    MapRules, RootCa, SslProxyingList, UrlPattern,
 };
 use std::{
     net::SocketAddr,
@@ -68,6 +69,10 @@ pub enum FlowEventRecord {
         id: u64,
         error: String,
     },
+    Rewritten {
+        id: u64,
+        description: String,
+    },
     Tunnel {
         id: u64,
         client: String,
@@ -83,6 +88,27 @@ pub struct BodyRecord {
     pub truncated: bool,
     pub incomplete: bool,
     pub content_encoding: Option<String>,
+}
+
+/// A Map Local rule: answer matching requests from `file`.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MapLocalRule {
+    pub pattern: String,
+    pub method: Option<String>,
+    pub file: String,
+    pub status: u16,
+    pub content_type: Option<String>,
+}
+
+/// A Map Remote rule: each part that is set replaces that part of the URL.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MapRemoteRule {
+    pub pattern: String,
+    pub method: Option<String>,
+    pub scheme: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub path: Option<String>,
 }
 
 /// Receives events. Called on a background thread; implementations must hand
@@ -200,6 +226,34 @@ impl LantaranEngine {
     pub fn set_exempt_hosts(&self, hosts: Vec<String>) {
         self.engine
             .set_exempt_hosts(hosts.iter().map(|h| HostPattern::new(h.as_str())).collect());
+    }
+
+    /// Replaces the Map Local and Map Remote rules, checked in order.
+    pub fn set_map_rules(&self, local: Vec<MapLocalRule>, remote: Vec<MapRemoteRule>) {
+        let blank = |value: Option<String>| value.filter(|v| !v.trim().is_empty());
+        self.engine.set_map_rules(MapRules {
+            local: local
+                .into_iter()
+                .map(|rule| MapLocal {
+                    pattern: UrlPattern::new(rule.pattern),
+                    method: blank(rule.method),
+                    file: rule.file,
+                    status: rule.status,
+                    content_type: blank(rule.content_type),
+                })
+                .collect(),
+            remote: remote
+                .into_iter()
+                .map(|rule| MapRemote {
+                    pattern: UrlPattern::new(rule.pattern),
+                    method: blank(rule.method),
+                    scheme: blank(rule.scheme),
+                    host: blank(rule.host),
+                    port: rule.port,
+                    path: blank(rule.path),
+                })
+                .collect(),
+        });
     }
 
     /// One side of a flow as captured, once that body has ended.
@@ -321,6 +375,7 @@ impl From<FlowEvent> for FlowEventRecord {
                 duration_ms: millis(duration),
             },
             FlowEvent::Failed { id, error } => Self::Failed { id, error },
+            FlowEvent::Rewritten { id, description } => Self::Rewritten { id, description },
             FlowEvent::Tunnel {
                 id,
                 client,

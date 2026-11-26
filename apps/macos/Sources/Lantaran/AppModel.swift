@@ -29,6 +29,11 @@ final class AppModel {
     var followNewest = true
     var showConnectDevice = false
     var showSSLProxying = false
+    var showMapLocal = false
+    var showMapRemote = false
+    /// A rule being created or edited from the table or a sheet.
+    var editingLocalRule: LocalRule?
+    var editingRemoteRule: RemoteRule?
 
     var filterText = "" {
         didSet { refilter() }
@@ -54,6 +59,8 @@ final class AppModel {
 
     private(set) var sslHosts: [String]
     private(set) var insecureHosts: [String]
+    private(set) var localRules: [LocalRule]
+    private(set) var remoteRules: [RemoteRule]
 
     private let defaults = UserDefaults.standard
     private var bridge: EventBridge?
@@ -63,6 +70,8 @@ final class AppModel {
         static let acceptOtherDevices = "acceptOtherDevices"
         static let sslHosts = "sslProxyingHosts"
         static let insecureHosts = "insecureHosts"
+        static let localRules = "mapLocalRules"
+        static let remoteRules = "mapRemoteRules"
     }
 
     init() {
@@ -73,6 +82,8 @@ final class AppModel {
         acceptOtherDevices = defaults.bool(forKey: Keys.acceptOtherDevices)
         sslHosts = defaults.stringArray(forKey: Keys.sslHosts) ?? []
         insecureHosts = defaults.stringArray(forKey: Keys.insecureHosts) ?? []
+        localRules = Self.decode([LocalRule].self, defaults.data(forKey: Keys.localRules)) ?? []
+        remoteRules = Self.decode([RemoteRule].self, defaults.data(forKey: Keys.remoteRules)) ?? []
 
         do {
             let engine = try LantaranEngine(dataDir: Self.dataDirectory.path)
@@ -88,7 +99,7 @@ final class AppModel {
     }
 
     /// Shared with the command line tool, so both use the same certificate.
-    static var dataDirectory: URL {
+    nonisolated static var dataDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Lantaran", isDirectory: true)
     }
@@ -163,9 +174,74 @@ final class AppModel {
         sslHosts.contains { pattern in Self.matches(pattern: pattern, host: host) }
     }
 
+    func setLocalRules(_ rules: [LocalRule]) {
+        localRules = rules
+        defaults.set(try? JSONEncoder().encode(rules), forKey: Keys.localRules)
+        pushRules()
+    }
+
+    func setRemoteRules(_ rules: [RemoteRule]) {
+        remoteRules = rules
+        defaults.set(try? JSONEncoder().encode(rules), forKey: Keys.remoteRules)
+        pushRules()
+    }
+
+    /// Adds `rule`, or replaces the rule with the same id.
+    func saveLocalRule(_ rule: LocalRule) {
+        var rules = localRules
+        if let index = rules.firstIndex(where: { $0.id == rule.id }) { rules[index] = rule } else { rules.append(rule) }
+        setLocalRules(rules)
+    }
+
+    func saveRemoteRule(_ rule: RemoteRule) {
+        var rules = remoteRules
+        if let index = rules.firstIndex(where: { $0.id == rule.id }) { rules[index] = rule } else { rules.append(rule) }
+        setRemoteRules(rules)
+    }
+
+    /// Saves the flow's response body to a file and starts a Map Local rule
+    /// for its URL, ready to edit.
+    func startMapLocal(from flow: Flow) {
+        var rule = LocalRule(pattern: Self.pattern(for: flow), status: Int(flow.status ?? 200))
+        let contentType = flow.responseContentType
+        rule.contentType = contentType ?? ""
+        do {
+            try FileManager.default.createDirectory(at: MapFiles.directory, withIntermediateDirectories: true)
+            let file = MapFiles.directory.appendingPathComponent(MapFiles.fileName(for: flow, contentType: contentType))
+            let data = body(of: flow, response: true)?.data ?? Data()
+            try data.write(to: file)
+            rule.file = file.path
+        } catch {
+            lastError = "Could not save the response for Map Local: \(error.localizedDescription)"
+        }
+        editingLocalRule = rule
+    }
+
+    func startMapRemote(from flow: Flow) {
+        editingRemoteRule = RemoteRule(pattern: Self.pattern(for: flow))
+    }
+
+    /// A pattern for a flow's URL that ignores the query.
+    static func pattern(for flow: Flow) -> String {
+        guard var components = URLComponents(string: flow.url) else { return flow.url }
+        let hadQuery = components.query != nil
+        components.query = nil
+        components.fragment = nil
+        let base = components.string ?? flow.url
+        return hadQuery ? base + "?*" : base
+    }
+
     private func pushRules() {
         engine?.setSslProxying(include: sslHosts, exclude: [])
         engine?.setExemptHosts(hosts: insecureHosts)
+        engine?.setMapRules(
+            local: localRules.filter(\.enabled).map(\.engineRule),
+            remote: remoteRules.filter(\.enabled).compactMap(\.engineRule)
+        )
+    }
+
+    private static func decode<T: Decodable>(_ type: T.Type, _ data: Data?) -> T? {
+        data.flatMap { try? JSONDecoder().decode(type, from: $0) }
     }
 
     private static func clean(_ hosts: [String]) -> [String] {
@@ -212,6 +288,8 @@ final class AppModel {
                 }
             case let .failed(id, error):
                 update(id) { $0.error = error }
+            case let .rewritten(id, description):
+                update(id) { $0.mapping = description }
             }
         }
 

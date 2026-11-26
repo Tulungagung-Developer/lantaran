@@ -30,6 +30,11 @@ struct LantaranApp: App {
             CommandMenu("Tools") {
                 Button("SSL Proxying List…") { model.showSSLProxying = true }
                     .keyboardShortcut("p", modifiers: [.command, .option])
+                Divider()
+                Button("Map Local…") { model.showMapLocal = true }
+                    .keyboardShortcut("l", modifiers: [.command, .option])
+                Button("Map Remote…") { model.showMapRemote = true }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
             }
         }
 

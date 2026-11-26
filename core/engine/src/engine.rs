@@ -3,6 +3,7 @@ use crate::{
     capture::{self, BodyStore, FlowTracker, Tap, TapSink},
     events::{DEFAULT_EVENT_CAPACITY, EventQueue, EventStream},
     guard::{self, Verdict},
+    mapping,
     onboarding::{self, CertificateFiles, ONBOARDING_HOST},
     upstream::{self, ExemptHosts},
 };
@@ -14,7 +15,7 @@ use hudsucker::{
     rustls::crypto::aws_lc_rs,
     tokio_tungstenite::Connector,
 };
-use lantaran_rules::{HostPattern, SslProxyingList};
+use lantaran_rules::{HostPattern, MapRules, SslProxyingList};
 use std::{
     sync::{
         Arc, RwLock,
@@ -52,6 +53,7 @@ struct Shared {
     body_limit: AtomicUsize,
     exempt_hosts: ExemptHosts,
     certificate: CertificateFiles,
+    map_rules: RwLock<MapRules>,
 }
 
 impl Engine {
@@ -74,6 +76,7 @@ impl Engine {
             body_limit: AtomicUsize::new(DEFAULT_BODY_LIMIT),
             exempt_hosts: ExemptHosts::default(),
             certificate,
+            map_rules: RwLock::new(MapRules::default()),
         });
 
         (Self { ca, shared }, stream)
@@ -97,6 +100,15 @@ impl Engine {
             .exempt_hosts
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = hosts;
+    }
+
+    /// Replaces the Map Local and Map Remote rules. Applies to new requests.
+    pub fn set_map_rules(&self, rules: MapRules) {
+        *self
+            .shared
+            .map_rules
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = rules;
     }
 
     /// Sets how many bytes of each body are kept. Applies to new flows.
@@ -186,6 +198,54 @@ impl Drop for Shared {
     }
 }
 
+impl Handler {
+    /// Sends `res` to the client without contacting a server, reporting it
+    /// and capturing both bodies like any other flow.
+    fn answer_locally(
+        &self,
+        id: FlowId,
+        req: Request<Body>,
+        res: Response<Body>,
+    ) -> RequestOrResponse {
+        let flow = FlowTracker::new(id, false);
+
+        // Nobody else reads the request body, so read it here to capture it.
+        let (parts, body) = req.into_parts();
+        let body = Tap::wrap(
+            body,
+            &parts.headers,
+            Arc::clone(&self.shared),
+            Arc::clone(&flow),
+            Direction::Request,
+            self.shared.body_limit(),
+        );
+        tokio::spawn(async move {
+            use http_body_util::BodyExt;
+            let _ = body.collect().await;
+        });
+
+        self.shared.emit(FlowEvent::Response {
+            id,
+            status: res.status().as_u16(),
+            version: format!("{:?}", res.version()),
+            headers: headers(res.headers()),
+            elapsed: flow.started.elapsed(),
+            unverified_upstream: false,
+        });
+
+        let (parts, body) = res.into_parts();
+        let body = Tap::wrap(
+            body,
+            &parts.headers,
+            Arc::clone(&self.shared),
+            flow,
+            Direction::Response,
+            self.shared.body_limit(),
+        );
+        Response::from_parts(parts, body).into()
+    }
+}
+
 /// hudsucker clones the handler for each request and calls `handle_request`
 /// and then `handle_response` or `handle_error` on that same clone, so
 /// `pending` links a response to its request.
@@ -245,10 +305,58 @@ impl HttpHandler for Handler {
             return req.into();
         }
 
+        let id = self.shared.next_id();
+        self.shared.emit(request_event(id, ctx, &req));
+        let mut req = req;
+
+        // Mapping happens after the guard: a rule the user wrote may well
+        // point at a server on this machine, and that is the point of it.
+        let (local, remote) = {
+            let rules = self
+                .shared
+                .map_rules
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let url = req.uri().to_string();
+            let method = req.method().as_str();
+            match rules.local_for(method, &url) {
+                Some(rule) => (Some(rule.clone()), None),
+                None => (None, rules.remote_for(method, &url).cloned()),
+            }
+        };
+
+        if let Some(rule) = local {
+            let (res, problem) = mapping::local_response(&rule).await;
+            let description = match problem {
+                None => format!("Map Local: {}", rule.file),
+                Some(problem) => format!("Map Local {problem}"),
+            };
+            self.shared.emit(FlowEvent::Rewritten { id, description });
+            return self.answer_locally(id, req, res);
+        }
+
+        if let Some(rule) = remote {
+            match mapping::remote_uri(req.uri(), &rule) {
+                Ok(uri) => {
+                    self.shared.emit(FlowEvent::Rewritten {
+                        id,
+                        description: format!("Map Remote: {uri}"),
+                    });
+                    *req.uri_mut() = uri;
+                }
+                Err(error) => self.shared.emit(FlowEvent::Rewritten {
+                    id,
+                    description: format!("Map Remote rule not applied: {error}"),
+                }),
+            }
+        }
+
         let unverified_upstream = req.uri().scheme_str() == Some("https")
-            && upstream::exempt(&self.shared.exempt_hosts, destination.host());
-        let flow = FlowTracker::new(self.shared.next_id(), unverified_upstream);
-        self.shared.emit(request_event(flow.id, ctx, &req));
+            && req
+                .uri()
+                .host()
+                .is_some_and(|host| upstream::exempt(&self.shared.exempt_hosts, host));
+        let flow = FlowTracker::new(id, unverified_upstream);
 
         let (parts, body) = req.into_parts();
         let body = Tap::wrap(
