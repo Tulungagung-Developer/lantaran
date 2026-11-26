@@ -12,9 +12,11 @@ use hudsucker::{
 };
 use lantaran_rules::{MapLocal, MapRemote, content_type_for};
 
-/// The response for a Map Local rule. A file that cannot be read gives a
-/// 500 that says why, rather than silently reaching the server.
-pub(crate) async fn local_response(rule: &MapLocal) -> Response<Body> {
+/// The response for a Map Local rule, and a problem to report when the file
+/// could not be read. That case gives the device a plain 500, rather than
+/// silently reaching the server; the path and the reason stay on this
+/// machine, in the returned problem.
+pub(crate) async fn local_response(rule: &MapLocal) -> (Response<Body>, Option<String>) {
     match tokio::fs::read(&rule.file).await {
         Ok(bytes) => {
             let mut res = Response::new(Body::from(Full::new(bytes.into())));
@@ -28,15 +30,13 @@ pub(crate) async fn local_response(rule: &MapLocal) -> Response<Body> {
             }
             res.headers_mut()
                 .insert(CACHE_CONTROL, "no-store".parse().expect("valid header"));
-            res
+            (res, None)
         }
         Err(error) => {
-            let mut res = Response::new(Body::from(format!(
-                "Lantaran Map Local could not read {}: {error}\n",
-                rule.file
-            )));
+            let mut res =
+                Response::new(Body::from("Lantaran Map Local: the file is unavailable\n"));
             *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-            res
+            (res, Some(format!("could not read {}: {error}", rule.file)))
         }
     }
 }

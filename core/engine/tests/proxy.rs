@@ -732,7 +732,7 @@ async fn map_local_reads_the_file_on_every_request() {
 async fn map_local_with_a_missing_file_says_so() {
     let server = closed_address().await;
     let dir = tempfile::tempdir().unwrap();
-    let proxy = start_proxy(SslProxyingList::new()).await;
+    let mut proxy = start_proxy(SslProxyingList::new()).await;
     proxy.engine.set_map_rules(map_local(
         format!("http://{server}/*"),
         &dir.path().join("missing.json"),
@@ -744,8 +744,19 @@ async fn map_local_with_a_missing_file_says_so() {
         "unexpected reply: {reply}"
     );
     assert!(
-        reply.contains("could not read"),
-        "unexpected reply: {reply}"
+        !reply.contains("missing.json"),
+        "the device must not learn paths on this machine: {reply}"
+    );
+
+    // The path and the reason are reported on this machine instead.
+    next_event(&mut proxy.events).await;
+    let event = next_event(&mut proxy.events).await;
+    let FlowEvent::Rewritten { description, .. } = event else {
+        panic!("expected a rewritten event, got {event:?}");
+    };
+    assert!(
+        description.contains("could not read") && description.contains("missing.json"),
+        "{description}"
     );
 }
 

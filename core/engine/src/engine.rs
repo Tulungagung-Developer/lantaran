@@ -326,11 +326,13 @@ impl HttpHandler for Handler {
         };
 
         if let Some(rule) = local {
-            self.shared.emit(FlowEvent::Rewritten {
-                id,
-                description: format!("Map Local: {}", rule.file),
-            });
-            return self.answer_locally(id, req, mapping::local_response(&rule).await);
+            let (res, problem) = mapping::local_response(&rule).await;
+            let description = match problem {
+                None => format!("Map Local: {}", rule.file),
+                Some(problem) => format!("Map Local {problem}"),
+            };
+            self.shared.emit(FlowEvent::Rewritten { id, description });
+            return self.answer_locally(id, req, res);
         }
 
         if let Some(rule) = remote {

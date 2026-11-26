@@ -5,7 +5,9 @@ enum Curl {
     static func command(for flow: Flow, body: Data?) -> String {
         var parts = ["curl", quote(flow.url)]
         if flow.method != "GET" {
-            parts.append("-X \(flow.method)")
+            // The method comes from the device and may contain characters
+            // a shell acts on, such as | or &, so it is quoted too.
+            parts.append("-X " + quote(flow.method))
         }
         // HTTP/2 pseudo-headers and headers curl sets itself are left out.
         let skipped: Set<String> = ["host", "content-length", "connection", "accept-encoding"]
