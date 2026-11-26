@@ -37,3 +37,30 @@ final class QuickFilterTests: XCTestCase {
         XCTAssertFalse(QuickFilter.other.matches(flow(url: "https://api.test/graphql")))
     }
 }
+
+final class TableSortTests: XCTestCase {
+    private func flows() -> [Flow] {
+        (1...4).map { id in
+            var flow = Flow.request(id: UInt64(id), client: "127.0.0.1", clientPort: 1, startedAt: 0,
+                                    method: "GET", url: "https://h\(5 - id).test/", version: "HTTP/1.1", headers: [])
+            flow.status = id == 3 ? nil : UInt16(id * 100)
+            return flow
+        }
+    }
+
+    func testNewestFirstByDefault() {
+        XCTAssertEqual(TableSort.rows([0, 1, 2, 3], in: flows(), by: nil), [3, 2, 1, 0])
+        XCTAssertEqual(TableSort.rows([0, 1, 2, 3], in: flows(),
+                                      by: NSSortDescriptor(key: "id", ascending: true)), [0, 1, 2, 3])
+    }
+
+    func testOtherColumnsSort() {
+        XCTAssertEqual(TableSort.rows([0, 1, 2, 3], in: flows(),
+                                      by: NSSortDescriptor(key: "url", ascending: true)), [3, 2, 1, 0])
+        // No status yet sorts before any status.
+        XCTAssertEqual(TableSort.rows([0, 1, 2, 3], in: flows(),
+                                      by: NSSortDescriptor(key: "code", ascending: true)), [2, 0, 1, 3])
+        XCTAssertEqual(TableSort.rows([0, 1, 2, 3], in: flows(),
+                                      by: NSSortDescriptor(key: "code", ascending: false)), [3, 1, 0, 2])
+    }
+}

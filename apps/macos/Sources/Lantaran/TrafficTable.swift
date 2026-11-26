@@ -20,15 +20,26 @@ struct TrafficTable: NSViewRepresentable {
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.rowHeight = 22
         table.intercellSpacing = NSSize(width: 8, height: 0)
-        table.autosaveName = "TrafficTable"
-        table.autosaveTableColumns = true
 
         for column in Column.allCases {
             let tableColumn = NSTableColumn(identifier: column.identifier)
             tableColumn.title = column.title
             tableColumn.width = column.width
             tableColumn.minWidth = 20
+            if column != .state {
+                // Numbers and times read best largest first, text A to Z.
+                tableColumn.sortDescriptorPrototype = NSSortDescriptor(
+                    key: column.rawValue, ascending: !column.sortsDescendingFirst)
+            }
             table.addTableColumn(tableColumn)
+        }
+
+        // Set after the columns exist, so the saved widths, order and sort
+        // apply to them.
+        table.autosaveName = "TrafficTable"
+        table.autosaveTableColumns = true
+        if table.sortDescriptors.isEmpty {
+            table.sortDescriptors = [TableSort.newestFirst]
         }
 
         table.dataSource = context.coordinator
@@ -58,6 +69,10 @@ struct TrafficTable: NSViewRepresentable {
         case state, id, url, client, method, status, code, time, duration, request, response, edited
 
         var identifier: NSUserInterfaceItemIdentifier { .init(rawValue) }
+
+        var sortsDescendingFirst: Bool {
+            [.id, .time, .code, .duration, .request, .response].contains(self)
+        }
 
         var title: String {
             switch self {
@@ -98,6 +113,9 @@ struct TrafficTable: NSViewRepresentable {
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         let model: AppModel
         weak var table: NSTableView?
+        /// Indexes into `model.flows`, in the order the table shows them:
+        /// `model.visible` sorted by the column header the user picked.
+        private var rows: [Int] = []
         private var shownRevision = -1
         private var settingSelection = false
 
@@ -112,20 +130,43 @@ struct TrafficTable: NSViewRepresentable {
         }
 
         func update(revision: Int, selected: UInt64?) {
-            guard let table else { return }
+            guard table != nil else { return }
             if revision != shownRevision {
                 shownRevision = revision
-                table.reloadData()
-                if model.followNewest, model.visible.count > 0 {
-                    table.scrollRowToVisible(model.visible.count - 1)
-                }
+                reload()
             }
             selectRow(for: selected)
         }
 
+        private func reload() {
+            guard let table else { return }
+            rows = TableSort.rows(model.visible, in: model.flows, by: table.sortDescriptors.first)
+            table.reloadData()
+            if model.followNewest, let newest = newestRow {
+                table.scrollRowToVisible(newest)
+            }
+        }
+
+        /// Where the most recent visible flow is in the current order.
+        private var newestRow: Int? {
+            guard let last = model.visible.last else { return nil }
+            if rows.first == last { return 0 }
+            if rows.last == last { return rows.count - 1 }
+            return rows.firstIndex(of: last)
+        }
+
+        func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+            let selected = model.selectedFlowID
+            reload()
+            selectRow(for: selected)
+            if let row = tableView.selectedRowIndexes.first {
+                tableView.scrollRowToVisible(row)
+            }
+        }
+
         private func selectRow(for id: UInt64?) {
             guard let table else { return }
-            let row = id.flatMap { id in model.visible.lastIndex { model.flows[$0].id == id } }
+            let row = id.flatMap { id in rows.firstIndex { model.flows[$0].id == id } }
             let wanted = row.map { IndexSet(integer: $0) } ?? IndexSet()
             if table.selectedRowIndexes != wanted {
                 settingSelection = true
@@ -138,8 +179,8 @@ struct TrafficTable: NSViewRepresentable {
 
         func menuNeedsUpdate(_ menu: NSMenu) {
             menu.removeAllItems()
-            guard let table, table.clickedRow >= 0, table.clickedRow < model.visible.count else { return }
-            let flow = model.flows[model.visible[table.clickedRow]]
+            guard let table, table.clickedRow >= 0, table.clickedRow < rows.count else { return }
+            let flow = model.flows[rows[table.clickedRow]]
 
             func add(_ title: String, _ action: Selector, enabled: Bool = true) {
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
@@ -193,26 +234,26 @@ struct TrafficTable: NSViewRepresentable {
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
-            model.visible.count
+            rows.count
         }
 
         func tableViewSelectionDidChange(_ notification: Notification) {
             guard !settingSelection, let table else { return }
             let row = table.selectedRow
-            model.selectedFlowID = row >= 0 && row < model.visible.count
-                ? model.flows[model.visible[row]].id
+            model.selectedFlowID = row >= 0 && row < rows.count
+                ? model.flows[rows[row]].id
                 : nil
             // A row picked by hand stops the list from jumping away from it.
-            if row >= 0, row < model.visible.count - 1 {
+            if row >= 0, row != newestRow {
                 model.followNewest = false
             }
         }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             guard let tableColumn, let column = Column(rawValue: tableColumn.identifier.rawValue),
-                  row < model.visible.count
+                  row < rows.count
             else { return nil }
-            let flow = model.flows[model.visible[row]]
+            let flow = model.flows[rows[row]]
 
             if column == .state {
                 let view = tableView.makeView(withIdentifier: tableColumn.identifier, owner: nil) as? StateDot
@@ -321,5 +362,63 @@ final class StateDot: NSView {
         let rect = NSRect(x: bounds.midX - size / 2, y: bounds.midY - size / 2, width: size, height: size)
         color.setFill()
         NSBezierPath(ovalIn: rect).fill()
+    }
+}
+
+/// The table's order. Rows arrive in ID order, so sorting by ID or time is
+/// the arrival order or its reverse; other columns are sorted, ties kept in
+/// the chosen direction of arrival.
+enum TableSort {
+    static let newestFirst = NSSortDescriptor(key: TrafficTable.Column.id.rawValue, ascending: false)
+
+    static func rows(_ visible: [Int], in flows: [Flow], by descriptor: NSSortDescriptor?) -> [Int] {
+        let descriptor = descriptor ?? newestFirst
+        let ascending = descriptor.ascending
+        guard let key = descriptor.key, let column = TrafficTable.Column(rawValue: key),
+              column != .id, column != .time, column != .state
+        else { return ascending ? visible : visible.reversed() }
+
+        return visible.sorted { a, b in
+            switch compare(flows[a], flows[b], by: column) {
+            case .orderedSame: ascending ? a < b : a > b
+            case .orderedAscending: ascending
+            case .orderedDescending: !ascending
+            }
+        }
+    }
+
+    private static func compare(_ a: Flow, _ b: Flow, by column: TrafficTable.Column) -> ComparisonResult {
+        switch column {
+        case .url: a.url.localizedStandardCompare(b.url)
+        case .client: a.app.localizedStandardCompare(b.app)
+        case .method: a.method.compare(b.method)
+        case .status: compare(rank(a.state), rank(b.state))
+        case .code: compare(a.status, b.status)
+        case .duration: compare(a.durationMs, b.durationMs)
+        case .request: compare(a.requestSize, b.requestSize)
+        case .response: compare(a.responseSize, b.responseSize)
+        case .edited: (a.mappingKind ?? "").compare(b.mappingKind ?? "")
+        case .state, .id, .time: .orderedSame
+        }
+    }
+
+    private static func rank(_ state: Flow.State) -> Int {
+        switch state {
+        case .active: 0
+        case .receiving: 1
+        case .completed: 2
+        case .failed: 3
+        case .tunnel: 4
+        }
+    }
+
+    /// Missing values (no response yet) sort before any value.
+    private static func compare<T: Comparable>(_ a: T?, _ b: T?) -> ComparisonResult {
+        switch (a, b) {
+        case let (a?, b?): a < b ? .orderedAscending : a > b ? .orderedDescending : .orderedSame
+        case (nil, nil): .orderedSame
+        case (nil, _): .orderedAscending
+        case (_, nil): .orderedDescending
+        }
     }
 }

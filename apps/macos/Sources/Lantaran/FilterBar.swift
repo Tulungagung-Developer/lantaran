@@ -8,6 +8,9 @@ enum FilterField: String, CaseIterable, Identifiable {
     case status = "Status"
     case header = "Header"
     var id: String { rawValue }
+
+    /// The name on the bar, short enough to leave room for typing.
+    var shortName: String { self == .any ? "Any" : rawValue }
 }
 
 /// One-click filters by protocol and content type. Selecting several shows
@@ -67,15 +70,18 @@ struct FilterBar: View {
 
         HStack(spacing: 8) {
             HStack(spacing: 4) {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                    .foregroundStyle(.secondary)
-                Picker("", selection: $model.filterField) {
-                    ForEach(FilterField.allCases) { Text($0.rawValue).tag($0) }
+                Menu {
+                    Picker("Search in", selection: $model.filterField) {
+                        ForEach(FilterField.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Label(model.filterField.shortName, systemImage: "line.3.horizontal.decrease.circle")
+                        .labelStyle(.titleAndIcon)
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
+                .menuStyle(.borderlessButton)
                 .fixedSize()
-                .controlSize(.small)
+                .help("Choose what the filter searches")
                 TextField("Filter requests (⇧⌘F)", text: $model.filterText)
                     .textFieldStyle(.plain)
                     .focused($focused)
