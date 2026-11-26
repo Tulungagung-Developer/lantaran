@@ -8,7 +8,7 @@ struct ContentView: View {
 
         NavigationSplitView {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 290, max: 440)
         } detail: {
             VStack(spacing: 0) {
                 if let error = model.startupError ?? model.lastError {
@@ -134,60 +134,5 @@ struct StatusBar: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(.bar)
-    }
-}
-
-struct SidebarView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var model = model
-
-        List(selection: $model.sidebarSelection) {
-            Label("All Traffic", systemImage: "tray.full")
-                .tag(SidebarItem.all)
-            Section("Devices") {
-                ForEach(model.clients, id: \.0) { client, count in
-                    SidebarRow(title: deviceName(client), systemImage: deviceIcon(client), count: count)
-                        .tag(SidebarItem.client(client))
-                }
-            }
-            Section("Domains") {
-                ForEach(model.hosts, id: \.0) { host, count in
-                    SidebarRow(
-                        title: host,
-                        systemImage: model.isDecrypted(host) ? "lock.open" : "globe",
-                        count: count
-                    )
-                    .tag(SidebarItem.host(host))
-                }
-            }
-        }
-        .listStyle(.sidebar)
-    }
-
-    private func deviceName(_ client: String) -> String {
-        client == "127.0.0.1" || client == "::1" ? "This Mac, simulators and emulators" : client
-    }
-
-    private func deviceIcon(_ client: String) -> String {
-        client == "127.0.0.1" || client == "::1" ? "laptopcomputer" : "iphone"
-    }
-}
-
-struct SidebarRow: View {
-    let title: String
-    let systemImage: String
-    let count: Int
-
-    var body: some View {
-        HStack {
-            Label(title, systemImage: systemImage).lineLimit(1)
-            Spacer()
-            Text("\(count)")
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-        }
     }
 }

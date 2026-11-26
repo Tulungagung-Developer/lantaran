@@ -45,6 +45,9 @@ pub enum FlowEventRecord {
     Request {
         id: u64,
         client: String,
+        /// The client's source port, which tells connections from the same
+        /// machine apart.
+        client_port: u16,
         started_at: f64,
         method: String,
         url: String,
@@ -76,6 +79,7 @@ pub enum FlowEventRecord {
     Tunnel {
         id: u64,
         client: String,
+        client_port: u16,
         authority: String,
     },
 }
@@ -376,6 +380,7 @@ impl From<FlowEvent> for FlowEventRecord {
             } => Self::Request {
                 id,
                 client: client.ip().to_string(),
+                client_port: client.port(),
                 started_at: started_at
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
@@ -420,6 +425,7 @@ impl From<FlowEvent> for FlowEventRecord {
             } => Self::Tunnel {
                 id,
                 client: client.ip().to_string(),
+                client_port: client.port(),
                 authority,
             },
         }
@@ -506,7 +512,9 @@ mod tests {
         while seen.len() < 2 {
             seen.extend(receiver.recv_timeout(Duration::from_secs(5)).unwrap());
         }
-        assert!(matches!(&seen[0], FlowEventRecord::Request { method, .. } if method == "GET"));
+        assert!(
+            matches!(&seen[0], FlowEventRecord::Request { method, client_port, .. } if method == "GET" && *client_port != 0)
+        );
         assert!(matches!(&seen[1], FlowEventRecord::Failed { .. }));
         engine.stop();
     }
