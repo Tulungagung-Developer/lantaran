@@ -12,7 +12,9 @@ repository = "https://github.com/Tulungagung-Developer/lantaran"
 [workspace.dependencies]
 lantaran-engine = { path = "engine" }
 lantaran-rules = { path = "rules" }
+bytes = "1"
 hudsucker = { version = "0.25", features = ["http2"] }
+http-body-util = "0.1"
 thiserror = "2"
 time = "0.3"
 tokio = "1"

@@ -1,10 +1,11 @@
 use clap::Parser;
-use lantaran_engine::{Engine, FlowEvent, RootCa, SslProxyingList};
+use lantaran_engine::{Direction, Engine, FlowEvent, FlowId, Headers, RootCa, SslProxyingList};
 use std::{
     error::Error,
     net::{IpAddr, SocketAddr, UdpSocket},
     path::PathBuf,
     process::ExitCode,
+    sync::Arc,
 };
 use tokio::{net::TcpListener, sync::mpsc};
 
@@ -26,7 +27,14 @@ struct Args {
     /// Directory that holds the root certificate and its key.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
+
+    /// Also print headers and the start of each body.
+    #[arg(short, long)]
+    verbose: bool,
 }
+
+/// How much of a body `--verbose` prints.
+const BODY_PREVIEW: usize = 400;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -71,7 +79,8 @@ async fn run(args: Args) -> Result<(), Box<dyn Error>> {
     }
 
     let (engine, events) = Engine::new(ca, ssl_proxying);
-    tokio::spawn(print_events(events));
+    let engine = Arc::new(engine);
+    tokio::spawn(print_events(Arc::clone(&engine), events, args.verbose));
 
     engine
         .serve(listener, async {
@@ -81,7 +90,11 @@ async fn run(args: Args) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn print_events(mut events: mpsc::UnboundedReceiver<FlowEvent>) {
+async fn print_events(
+    engine: Arc<Engine>,
+    mut events: mpsc::UnboundedReceiver<FlowEvent>,
+    verbose: bool,
+) {
     while let Some(event) = events.recv().await {
         match event {
             FlowEvent::Request {
@@ -89,15 +102,41 @@ async fn print_events(mut events: mpsc::UnboundedReceiver<FlowEvent>) {
                 client,
                 method,
                 url,
-            } => println!("#{id} {method} {url}  (from {})", client.ip()),
+                version,
+                headers,
+                ..
+            } => {
+                println!("#{id} {method} {url}  (from {})", client.ip());
+                if verbose {
+                    print_headers(&version, &headers);
+                }
+            }
             FlowEvent::Response {
                 id,
                 status,
+                version,
+                headers,
                 elapsed,
-                content_length,
             } => {
-                let size = content_length.map_or(String::new(), |n| format!(", {n} bytes"));
-                println!("#{id} {status} in {} ms{size}", elapsed.as_millis());
+                println!("#{id} {status} after {} ms", elapsed.as_millis());
+                if verbose {
+                    print_headers(&version, &headers);
+                }
+            }
+            FlowEvent::Completed {
+                id,
+                request_size,
+                response_size,
+                duration,
+            } => {
+                println!(
+                    "#{id} done in {} ms: {request_size} bytes up, {response_size} bytes down",
+                    duration.as_millis()
+                );
+                if verbose {
+                    print_body(&engine, id, Direction::Request).await;
+                    print_body(&engine, id, Direction::Response).await;
+                }
             }
             FlowEvent::Failed { id, error } => println!("#{id} failed: {error}"),
             FlowEvent::Tunnel {
@@ -109,6 +148,47 @@ async fn print_events(mut events: mpsc::UnboundedReceiver<FlowEvent>) {
                 client.ip()
             ),
         }
+    }
+}
+
+fn print_headers(version: &str, headers: &Headers) {
+    println!("    {version}");
+    for (name, value) in headers {
+        println!("    {name}: {value}");
+    }
+}
+
+async fn print_body(engine: &Engine, id: FlowId, direction: Direction) {
+    let Some(body) = engine.body(id, direction) else {
+        return;
+    };
+    if body.size == 0 {
+        return;
+    }
+
+    let label = match direction {
+        Direction::Request => "request body",
+        Direction::Response => "response body",
+    };
+    let bytes = match body.decoded().await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            println!("    {label}: {} bytes, could not be decoded", body.size);
+            return;
+        }
+    };
+
+    match std::str::from_utf8(&bytes) {
+        Ok(text) => {
+            let preview: String = text.chars().take(BODY_PREVIEW).collect();
+            let more = if preview.len() < text.len() || body.truncated {
+                " ..."
+            } else {
+                ""
+            };
+            println!("    {label}: {}{more}", preview.replace('\n', "\n    "));
+        }
+        Err(_) => println!("    {label}: {} bytes of binary data", body.size),
     }
 }
 

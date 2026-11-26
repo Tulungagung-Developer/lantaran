@@ -926,6 +926,9 @@ dependencies = [
 name = "lantaran-engine"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "flate2",
+ "http-body-util",
  "hudsucker",
  "lantaran-rules",
  "tempfile",

@@ -12,11 +12,11 @@ Early. The engine and a command line tool work; the desktop apps do not exist ye
 
 | Works today | Planned next |
 | --- | --- |
-| HTTP proxy, HTTP/1.1 and HTTP/2 | Request and response bodies |
-| HTTPS decryption for the hosts you list | WebSocket frames |
-| Untouched tunnelling for every other host | Certificate download page and QR code |
-| Root certificate created on first run | Guided iOS and Android setup |
-| Flow events printed in the terminal | macOS app |
+| HTTP proxy, HTTP/1.1 and HTTP/2 | WebSocket frames |
+| HTTPS decryption for the hosts you list | Certificate download page and QR code |
+| Untouched tunnelling for every other host | Guided iOS and Android setup |
+| Headers and bodies, decoded for display (`--verbose`) | macOS app |
+| Root certificate created on first run | |
 
 Each release is a [milestone](https://github.com/Tulungagung-Developer/lantaran/milestones), and the
 [roadmap](https://github.com/Tulungagung-Developer/lantaran/issues/34) lists everything planned, including

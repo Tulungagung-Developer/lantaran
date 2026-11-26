@@ -65,9 +65,15 @@ the system proxy switched on.
 
 ## Flow events
 
-`Request` and `Response` share a flow id. `Failed` replaces `Response` when the
-upstream server could not be reached. `Tunnel` reports an HTTPS connection that
-was passed through unread.
+A readable flow produces `Request`, `Response` (headers arrived) and `Completed`
+(the response body reached the client), all with the same flow id. `Failed`
+replaces `Response` or `Completed` when the flow ends early. `Tunnel` reports
+an HTTPS connection that was passed through unread.
+
+Bodies are not carried in events. Each body is copied as it streams through,
+up to a limit (5 MB by default), and is fetched afterwards by flow id with
+`Engine::body`. `CapturedBody::decoded` undoes `Content-Encoding` for display;
+the client always receives the original bytes.
 
 ## References
 

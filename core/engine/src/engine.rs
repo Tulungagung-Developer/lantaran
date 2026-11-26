@@ -1,11 +1,12 @@
 use crate::{
-    Error, FlowEvent, FlowId, RootCa,
+    CapturedBody, Direction, Error, FlowEvent, FlowId, Headers, RootCa,
+    capture::{self, BodyStore, FlowTracker, Tap, TapSink},
     guard::{self, Verdict},
 };
 use hudsucker::{
     Body, HttpContext, HttpHandler, Proxy, RequestOrResponse,
     certificate_authority::RcgenAuthority,
-    hyper::{Method, Request, Response, StatusCode, header::CONTENT_LENGTH},
+    hyper::{HeaderMap, Method, Request, Response, StatusCode},
     hyper_util::client::legacy::Error as UpstreamError,
     rustls::crypto::aws_lc_rs,
 };
@@ -13,14 +14,17 @@ use lantaran_rules::SslProxyingList;
 use std::{
     sync::{
         Arc, RwLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
-    time::Instant,
+    time::SystemTime,
 };
 use tokio::{net::TcpListener, sync::mpsc};
 
 /// How many generated per-host certificates are kept ready for reuse.
 const LEAF_CERT_CACHE: u64 = 1_000;
+
+/// How much of each body is kept by default. The rest still passes through.
+pub const DEFAULT_BODY_LIMIT: usize = 5 * 1024 * 1024;
 
 const DIRECT_REQUEST_NOTICE: &str = "Lantaran is running.\n\
 Set this address as the HTTP proxy in your device's Wi-Fi settings to capture its traffic.\n";
@@ -39,6 +43,8 @@ struct Shared {
     ssl_proxying: RwLock<SslProxyingList>,
     events: mpsc::UnboundedSender<FlowEvent>,
     next_id: AtomicU64,
+    bodies: BodyStore,
+    body_limit: AtomicUsize,
 }
 
 impl Engine {
@@ -52,6 +58,8 @@ impl Engine {
             ssl_proxying: RwLock::new(ssl_proxying),
             events,
             next_id: AtomicU64::new(1),
+            bodies: BodyStore::default(),
+            body_limit: AtomicUsize::new(DEFAULT_BODY_LIMIT),
         });
 
         (Self { ca, shared }, receiver)
@@ -64,6 +72,16 @@ impl Engine {
             .ssl_proxying
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = list;
+    }
+
+    /// Sets how many bytes of each body are kept. Applies to new flows.
+    pub fn set_body_limit(&self, bytes: usize) {
+        self.shared.body_limit.store(bytes, Ordering::Relaxed);
+    }
+
+    /// The captured body of one side of a flow, once that body has ended.
+    pub fn body(&self, id: FlowId, direction: Direction) -> Option<CapturedBody> {
+        self.shared.bodies.get(id, direction)
     }
 
     /// Accepts proxy connections on `listener` until `shutdown` completes.
@@ -95,16 +113,26 @@ impl Shared {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn emit(&self, event: FlowEvent) {
-        // Nobody listening is not an error: the proxy keeps forwarding traffic.
-        let _ = self.events.send(event);
-    }
-
     fn should_decrypt(&self, host: &str) -> bool {
         self.ssl_proxying
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .should_decrypt(host)
+    }
+
+    fn body_limit(&self) -> usize {
+        self.body_limit.load(Ordering::Relaxed)
+    }
+}
+
+impl TapSink for Shared {
+    fn store(&self) -> &BodyStore {
+        &self.bodies
+    }
+
+    fn emit(&self, event: FlowEvent) {
+        // Nobody listening is not an error: the proxy keeps forwarding traffic.
+        let _ = self.events.send(event);
     }
 }
 
@@ -114,7 +142,7 @@ impl Shared {
 #[derive(Clone)]
 struct Handler {
     shared: Arc<Shared>,
-    pending: Option<(FlowId, Instant)>,
+    pending: Option<Arc<FlowTracker>>,
 }
 
 impl HttpHandler for Handler {
@@ -134,12 +162,7 @@ impl HttpHandler for Handler {
         };
         if let Some((status, reason)) = refusal {
             let id = self.shared.next_id();
-            self.shared.emit(FlowEvent::Request {
-                id,
-                client: ctx.client_addr,
-                method: req.method().to_string(),
-                url: req.uri().to_string(),
-            });
+            self.shared.emit(request_event(id, ctx, &req));
             self.shared.emit(FlowEvent::Failed {
                 id,
                 error: reason.to_owned(),
@@ -156,48 +179,59 @@ impl HttpHandler for Handler {
             return req.into();
         }
 
-        let id = self.shared.next_id();
-        self.pending = Some((id, Instant::now()));
-        self.shared.emit(FlowEvent::Request {
-            id,
-            client: ctx.client_addr,
-            method: req.method().to_string(),
-            url: req.uri().to_string(),
-        });
+        let flow = FlowTracker::new(self.shared.next_id());
+        self.shared.emit(request_event(flow.id, ctx, &req));
 
-        req.into()
+        let (parts, body) = req.into_parts();
+        let body = Tap::wrap(
+            body,
+            &parts.headers,
+            Arc::clone(&self.shared),
+            Arc::clone(&flow),
+            Direction::Request,
+            self.shared.body_limit(),
+        );
+        self.pending = Some(flow);
+
+        Request::from_parts(parts, body).into()
     }
 
     async fn handle_response(&mut self, _ctx: &HttpContext, res: Response<Body>) -> Response<Body> {
-        if let Some((id, started)) = self.pending.take() {
-            let content_length = res
-                .headers()
-                .get(CONTENT_LENGTH)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse().ok());
+        let Some(flow) = self.pending.take() else {
+            return res;
+        };
 
-            self.shared.emit(FlowEvent::Response {
-                id,
-                status: res.status().as_u16(),
-                elapsed: started.elapsed(),
-                content_length,
-            });
-        }
+        self.shared.emit(FlowEvent::Response {
+            id: flow.id,
+            status: res.status().as_u16(),
+            version: format!("{:?}", res.version()),
+            headers: headers(res.headers()),
+            elapsed: flow.started.elapsed(),
+        });
 
-        res
+        let (parts, body) = res.into_parts();
+        let body = Tap::wrap(
+            body,
+            &parts.headers,
+            Arc::clone(&self.shared),
+            flow,
+            Direction::Response,
+            self.shared.body_limit(),
+        );
+        Response::from_parts(parts, body)
     }
 
     async fn handle_error(&mut self, _ctx: &HttpContext, err: UpstreamError) -> Response<Body> {
-        if let Some((id, _)) = self.pending.take() {
+        let reason = capture::describe(&err);
+        if let Some(flow) = self.pending.take() {
             self.shared.emit(FlowEvent::Failed {
-                id,
-                error: describe(&err),
+                id: flow.id,
+                error: reason.clone(),
             });
         }
 
         let mut res = Response::new(Body::from(format!(
-            "Lantaran could not reach the server: {}\n",
-            describe(&err)
+            "Lantaran could not reach the server: {reason}\n"
         )));
         *res.status_mut() = StatusCode::BAD_GATEWAY;
         res
@@ -221,15 +255,25 @@ impl HttpHandler for Handler {
     }
 }
 
-/// Joins an error with its causes, since the top-level message of an upstream
-/// failure is only "client error (Connect)".
-fn describe(err: &(dyn std::error::Error + 'static)) -> String {
-    let mut text = err.to_string();
-    let mut source = err.source();
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
+fn request_event(id: FlowId, ctx: &HttpContext, req: &Request<Body>) -> FlowEvent {
+    FlowEvent::Request {
+        id,
+        client: ctx.client_addr,
+        started_at: SystemTime::now(),
+        method: req.method().to_string(),
+        url: req.uri().to_string(),
+        version: format!("{:?}", req.version()),
+        headers: headers(req.headers()),
     }
-    text
+}
+
+fn headers(map: &HeaderMap) -> Headers {
+    map.iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_owned(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            )
+        })
+        .collect()
 }
