@@ -25,6 +25,15 @@ struct LantaranApp: App {
                 Button("Connect a Device…") { model.showConnectDevice = true }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
                 Divider()
+                Menu("Install Certificate on iOS") {
+                    Button("Physical Devices…") { model.connectDevice(.ios) }
+                    Button("Simulators…") { model.connectDevice(.simulator) }
+                }
+                Menu("Install Certificate on Android") {
+                    Button("Physical Devices…") { model.connectDevice(.android) }
+                    Button("Emulators…") { model.connectDevice(.emulator) }
+                }
+                Divider()
                 Button("Show Root Certificate in Finder") { model.revealCertificate() }
             }
             CommandMenu("Tools") {

@@ -28,6 +28,7 @@ final class AppModel {
     var selectedFlowID: UInt64?
     var followNewest = true
     var showConnectDevice = false
+    var connectDevicePlatform = DevicePlatform.ios
     var showSSLProxying = false
     var showMapLocal = false
     var showMapRemote = false
@@ -470,6 +471,12 @@ final class AppModel {
         return (data, record)
     }
 
+    /// Opens Connect Device on the steps for one kind of device.
+    func connectDevice(_ platform: DevicePlatform) {
+        connectDevicePlatform = platform
+        showConnectDevice = true
+    }
+
     func revealCertificate() {
         guard let path = engine?.certificatePath() else { return }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -479,4 +486,13 @@ final class AppModel {
         if case let LantaranError.Failed(message) = error { return message }
         return error.localizedDescription
     }
+}
+
+/// The kinds of device Connect Device has steps for.
+enum DevicePlatform: String, CaseIterable, Identifiable {
+    case ios = "iPhone or iPad"
+    case simulator = "iOS Simulator"
+    case android = "Android"
+    case emulator = "Android Emulator"
+    var id: String { rawValue }
 }

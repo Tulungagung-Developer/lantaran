@@ -5,31 +5,21 @@ import SwiftUI
 struct ConnectDeviceSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var platform = Platform.ios
-
-    enum Platform: String, CaseIterable, Identifiable {
-        case ios = "iPhone or iPad"
-        case simulator = "iOS Simulator"
-        case android = "Android"
-        case emulator = "Android Emulator"
-        var id: String { rawValue }
-    }
-
     var body: some View {
         @Bindable var model = model
 
         VStack(alignment: .leading, spacing: 16) {
             Text("Connect a Device").font(.title2.weight(.semibold))
 
-            Picker("", selection: $platform) {
-                ForEach(Platform.allCases) { Text($0.rawValue).tag($0) }
+            Picker("", selection: $model.connectDevicePlatform) {
+                ForEach(DevicePlatform.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
 
-            if platform == .simulator {
+            if model.connectDevicePlatform == .simulator {
                 SimulatorSteps()
-            } else if platform == .emulator {
+            } else if model.connectDevicePlatform == .emulator {
                 emulatorSteps
             } else if let address = model.addressForDevices {
                 deviceSteps(address: address)
@@ -70,7 +60,7 @@ struct ConnectDeviceSheet: View {
             VStack(alignment: .leading, spacing: 10) {
                 Step(number: 1, text: "Join the same Wi-Fi network as this Mac.")
                 Step(number: 2, text: "Scan the code with the camera and follow the steps on the page to install the certificate.")
-                if platform == .ios {
+                if model.connectDevicePlatform == .ios {
                     Step(number: 3, text: "Settings › General › About › Certificate Trust Settings: switch on Lantaran Root CA.")
                     Step(number: 4, text: "Settings › Wi-Fi › (i) next to the network › Configure Proxy › Manual.")
                 } else {
