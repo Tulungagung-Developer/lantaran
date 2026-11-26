@@ -13,6 +13,7 @@ mod error;
 mod events;
 mod flow;
 mod guard;
+mod upstream;
 
 pub use ca::RootCa;
 pub use capture::MAX_DECODED_SIZE;

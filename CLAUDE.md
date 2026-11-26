@@ -61,6 +61,10 @@ Events go through a bounded queue (`core/engine/src/events.rs`) and are read in 
 
 `core/engine/src/guard.rs` refuses requests from other devices to addresses private to the machine running the proxy (loopback, unspecified, link-local). Without it, any device on the Wi-Fi could reach services bound to localhost here. Clients on the same machine are not restricted. It must stay in the path of every request, not only `CONNECT`, because an HTTP/2 request inside a decrypted connection names its own destination. It fails closed when a host name cannot be resolved. For the same reason the CLI listens on `127.0.0.1` unless `--listen` says otherwise.
 
+### Upstream TLS
+
+The proxy's own connections to servers use the client config from `core/engine/src/upstream.rs`, passed to hudsucker with `with_http_connector` and `with_websocket_connector`. It trusts the public web roots plus the OS store, and accepts any certificate for hosts set with `Engine::set_exempt_hosts`. If you change the connector, keep `enable_http2()` (without it upstream HTTP/2 silently stops) and leave ALPN unset on the `ClientConfig` (hyper-rustls panics if it is preset).
+
 ### Conventions that are easy to miss
 
 - Use hudsucker's re-exports (`hudsucker::rcgen`, `hudsucker::hyper`, `hudsucker::rustls`) instead of adding those crates directly, so versions cannot drift apart.

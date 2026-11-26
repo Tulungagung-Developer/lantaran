@@ -3,6 +3,7 @@ use crate::{
     capture::{self, BodyStore, FlowTracker, Tap, TapSink},
     events::{DEFAULT_EVENT_CAPACITY, EventQueue, EventStream},
     guard::{self, Verdict},
+    upstream::{self, ExemptHosts},
 };
 use hudsucker::{
     Body, HttpContext, HttpHandler, Proxy, RequestOrResponse,
@@ -10,8 +11,9 @@ use hudsucker::{
     hyper::{HeaderMap, Method, Request, Response, StatusCode},
     hyper_util::client::legacy::Error as UpstreamError,
     rustls::crypto::aws_lc_rs,
+    tokio_tungstenite::Connector,
 };
-use lantaran_rules::SslProxyingList;
+use lantaran_rules::{HostPattern, SslProxyingList};
 use std::{
     sync::{
         Arc, RwLock,
@@ -50,6 +52,7 @@ struct Shared {
     next_id: AtomicU64,
     bodies: BodyStore,
     body_limit: AtomicUsize,
+    exempt_hosts: ExemptHosts,
 }
 
 impl Engine {
@@ -66,6 +69,7 @@ impl Engine {
             next_id: AtomicU64::new(1),
             bodies: BodyStore::new(DEFAULT_BODY_BUDGET),
             body_limit: AtomicUsize::new(DEFAULT_BODY_LIMIT),
+            exempt_hosts: ExemptHosts::default(),
         });
 
         (Self { ca, shared }, stream)
@@ -78,6 +82,17 @@ impl Engine {
             .ssl_proxying
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = list;
+    }
+
+    /// Replaces the hosts whose certificates are accepted without being
+    /// checked, for development servers with self-signed certificates.
+    /// Applies to new connections to servers.
+    pub fn set_exempt_hosts(&self, hosts: Vec<HostPattern>) {
+        *self
+            .shared
+            .exempt_hosts
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = hosts;
     }
 
     /// Sets how many bytes of each body are kept. Applies to new flows.
@@ -106,10 +121,22 @@ impl Engine {
         let provider = aws_lc_rs::default_provider();
         let authority = RcgenAuthority::new(self.ca.issuer()?, LEAF_CERT_CACHE, provider.clone());
 
+        // Replaces hudsucker's own connector, which trusts only the public
+        // web roots. HTTP and WebSocket must share the same settings.
+        let tls =
+            upstream::client_config(Arc::new(provider), Arc::clone(&self.shared.exempt_hosts))?;
+        let https = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(tls.clone())
+            .https_or_http()
+            .enable_http1()
+            .enable_http2()
+            .build();
+
         let proxy = Proxy::builder()
             .with_listener(listener)
             .with_ca(authority)
-            .with_rustls_connector(provider)
+            .with_http_connector(https)
+            .with_websocket_connector(Connector::Rustls(Arc::new(tls)))
             .with_http_handler(Handler {
                 shared: Arc::clone(&self.shared),
                 pending: None,
@@ -198,7 +225,9 @@ impl HttpHandler for Handler {
             return req.into();
         }
 
-        let flow = FlowTracker::new(self.shared.next_id());
+        let unverified_upstream = req.uri().scheme_str() == Some("https")
+            && upstream::exempt(&self.shared.exempt_hosts, destination.host());
+        let flow = FlowTracker::new(self.shared.next_id(), unverified_upstream);
         self.shared.emit(request_event(flow.id, ctx, &req));
 
         let (parts, body) = req.into_parts();
@@ -226,6 +255,7 @@ impl HttpHandler for Handler {
             version: format!("{:?}", res.version()),
             headers: headers(res.headers()),
             elapsed: flow.started.elapsed(),
+            unverified_upstream: flow.unverified_upstream,
         });
 
         let (parts, body) = res.into_parts();
@@ -241,7 +271,7 @@ impl HttpHandler for Handler {
     }
 
     async fn handle_error(&mut self, _ctx: &HttpContext, err: UpstreamError) -> Response<Body> {
-        let reason = capture::describe(&err);
+        let reason = upstream::certificate_problem(&err).unwrap_or_else(|| capture::describe(&err));
         if let Some(flow) = self.pending.take() {
             self.shared.emit(FlowEvent::Failed {
                 id: flow.id,

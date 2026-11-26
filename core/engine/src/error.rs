@@ -13,4 +13,7 @@ pub enum Error {
 
     #[error("the body could not be decoded")]
     Decode,
+
+    #[error("could not set up TLS for connections to servers: {0}")]
+    Tls(String),
 }

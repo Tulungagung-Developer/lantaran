@@ -3,16 +3,24 @@
 
 use flate2::{Compression, write::GzEncoder};
 use lantaran_engine::{
-    CapturedBody, Direction, Engine, EventStream, FlowEvent, MAX_DECODED_SIZE, RootCa,
+    CapturedBody, Direction, Engine, EventStream, FlowEvent, HostPattern, MAX_DECODED_SIZE, RootCa,
     SslProxyingList,
 };
 use std::{
     collections::VecDeque, future::pending, io::Write, net::SocketAddr, sync::Arc, time::Duration,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     time::timeout,
+};
+use tokio_rustls::{
+    TlsAcceptor, TlsConnector,
+    rustls::{
+        ClientConfig, RootCertStore, ServerConfig,
+        crypto::aws_lc_rs,
+        pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject},
+    },
 };
 
 const WAIT: Duration = Duration::from_secs(5);
@@ -53,6 +61,8 @@ struct Proxy {
     addr: SocketAddr,
     events: Events,
     engine: Arc<Engine>,
+    /// The engine's root certificate, for clients that need to trust it.
+    ca_pem: String,
 }
 
 /// Hands out events one at a time from the engine's batches.
@@ -74,6 +84,7 @@ impl Events {
 async fn start_proxy(ssl_proxying: SslProxyingList) -> Proxy {
     let dir = tempfile::tempdir().unwrap();
     let ca = RootCa::load_or_create(dir.path()).unwrap();
+    let ca_pem = ca.cert_pem().to_owned();
     let (engine, events) = Engine::new(ca, ssl_proxying);
     let engine = Arc::new(engine);
 
@@ -89,11 +100,12 @@ async fn start_proxy(ssl_proxying: SslProxyingList) -> Proxy {
             pending: VecDeque::new(),
         },
         engine,
+        ca_pem,
     }
 }
 
 /// Reads up to the blank line that ends an HTTP head.
-async fn read_head(stream: &mut TcpStream) -> String {
+async fn read_head(stream: &mut (impl AsyncRead + Unpin)) -> String {
     let mut head = Vec::new();
     let mut byte = [0u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
@@ -108,7 +120,7 @@ async fn read_head(stream: &mut TcpStream) -> String {
 }
 
 /// Reads a request head and, if it announces one, its body.
-async fn read_request(stream: &mut TcpStream) -> (String, Vec<u8>) {
+async fn read_request(stream: &mut (impl AsyncRead + Unpin)) -> (String, Vec<u8>) {
     let head = read_head(stream).await;
     let length = head
         .lines()
@@ -127,7 +139,7 @@ async fn read_request(stream: &mut TcpStream) -> (String, Vec<u8>) {
     (head, body)
 }
 
-async fn read_to_end(stream: &mut TcpStream) -> Vec<u8> {
+async fn read_to_end(stream: &mut (impl AsyncRead + Unpin)) -> Vec<u8> {
     let mut out = Vec::new();
     timeout(WAIT, stream.read_to_end(&mut out))
         .await
@@ -492,6 +504,141 @@ async fn old_bodies_are_dropped_to_stay_within_the_budget() {
     assert!(proxy.engine.body(ids[1], Direction::Response).is_none());
     assert!(proxy.engine.body(ids[2], Direction::Response).is_some());
     assert!(proxy.engine.body(ids[3], Direction::Response).is_some());
+}
+
+/// An HTTPS server on `localhost` with a self-signed certificate, like a
+/// development server. Answers every request with `secure hello`.
+async fn start_self_signed_origin() -> u16 {
+    let key = hudsucker::rcgen::KeyPair::generate().unwrap();
+    let cert = hudsucker::rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+        .unwrap()
+        .self_signed(&key)
+        .unwrap();
+    let config = ServerConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.der().clone()],
+            PrivateKeyDer::from_pem_slice(key.serialize_pem().as_bytes()).unwrap(),
+        )
+        .unwrap();
+    let acceptor = TlsAcceptor::from(Arc::new(config));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                // A rejected handshake is the point of some tests.
+                let Ok(mut tls) = acceptor.accept(stream).await else {
+                    return;
+                };
+                read_request(&mut tls).await;
+                tls.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\nsecure hello",
+                )
+                .await
+                .unwrap();
+                let _ = tls.shutdown().await;
+            });
+        }
+    });
+    port
+}
+
+/// Opens a decrypted connection to `host:port` through the proxy, trusting
+/// the proxy's root certificate the way a set-up device would.
+async fn connect_through(
+    proxy: &Proxy,
+    host: &str,
+    port: u16,
+) -> impl AsyncRead + AsyncWrite + Unpin + use<> {
+    let mut tcp = TcpStream::connect(proxy.addr).await.unwrap();
+    tcp.write_all(
+        format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n").as_bytes(),
+    )
+    .await
+    .unwrap();
+    read_head(&mut tcp).await;
+
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(CertificateDer::from_pem_slice(proxy.ca_pem.as_bytes()).unwrap())
+        .unwrap();
+    let config = ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    TlsConnector::from(Arc::new(config))
+        .connect(ServerName::try_from(host.to_owned()).unwrap(), tcp)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_self_signed_server_is_rejected_with_a_reason() {
+    let port = start_self_signed_origin().await;
+    let mut proxy = start_proxy(SslProxyingList::new().include("localhost")).await;
+
+    let mut tls = connect_through(&proxy, "localhost", port).await;
+    tls.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let reply = String::from_utf8_lossy(&read_to_end(&mut tls).await).into_owned();
+    assert!(
+        reply.starts_with("HTTP/1.1 502"),
+        "unexpected reply: {reply}"
+    );
+
+    let FlowEvent::Request { id, .. } = next_event(&mut proxy.events).await else {
+        panic!("expected a request event first");
+    };
+    let event = next_event(&mut proxy.events).await;
+    let FlowEvent::Failed {
+        id: failed_id,
+        error,
+    } = event
+    else {
+        panic!("expected a failed event, got {event:?}");
+    };
+    assert_eq!(failed_id, id);
+    assert!(
+        error.contains("certificate was rejected"),
+        "unexpected reason: {error}"
+    );
+}
+
+#[tokio::test]
+async fn an_exempt_self_signed_server_is_reached_and_marked() {
+    let port = start_self_signed_origin().await;
+    let mut proxy = start_proxy(SslProxyingList::new().include("localhost")).await;
+    proxy
+        .engine
+        .set_exempt_hosts(vec![HostPattern::new("localhost")]);
+
+    let mut tls = connect_through(&proxy, "localhost", port).await;
+    tls.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let reply = String::from_utf8_lossy(&read_to_end(&mut tls).await).into_owned();
+    assert!(reply.ends_with("secure hello"), "unexpected reply: {reply}");
+
+    next_event(&mut proxy.events).await;
+    let event = next_event(&mut proxy.events).await;
+    let FlowEvent::Response {
+        status,
+        unverified_upstream,
+        ..
+    } = event
+    else {
+        panic!("expected a response event, got {event:?}");
+    };
+    assert_eq!(status, 200);
+    assert!(unverified_upstream);
 }
 
 #[tokio::test]
