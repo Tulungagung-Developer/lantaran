@@ -702,13 +702,14 @@ async fn unreachable_upstream_is_reported_as_failed() {
 }
 
 #[tokio::test]
-async fn request_aimed_at_the_proxy_itself_gets_a_notice() {
+async fn the_proxy_address_serves_the_certificate_page() {
     let mut proxy = start_proxy(SslProxyingList::new()).await;
 
     let reply = send(
         proxy.addr,
         format!(
-            "GET / HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+            "GET / HTTP/1.1\r\nHost: {}\r\nUser-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 18_1)\r\n\
+             Connection: close\r\n\r\n",
             proxy.addr
         ),
     )
@@ -718,12 +719,84 @@ async fn request_aimed_at_the_proxy_itself_gets_a_notice() {
         reply.starts_with("HTTP/1.1 200"),
         "unexpected reply: {reply}"
     );
+    assert!(reply.contains("text/html"), "unexpected reply: {reply}");
     assert!(
-        reply.contains("Lantaran is running"),
-        "unexpected reply: {reply}"
+        reply.contains("Certificate Trust Settings"),
+        "iOS steps expected: {reply}"
+    );
+    assert!(
+        reply.contains("href=\"/lantaran-ca.crt\""),
+        "download link expected"
     );
     assert!(
         proxy.events.try_recv().is_none(),
-        "a request to the proxy itself is not a captured flow"
+        "the certificate page is not a captured flow"
+    );
+}
+
+#[tokio::test]
+async fn the_certificate_downloads_in_both_forms() {
+    let mut proxy = start_proxy(SslProxyingList::new()).await;
+
+    let mut client = TcpStream::connect(proxy.addr).await.unwrap();
+    client
+        .write_all(b"GET /lantaran-ca.crt HTTP/1.1\r\nHost: proxy\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let reply = read_to_end(&mut client).await;
+    let text = String::from_utf8_lossy(&reply).to_lowercase();
+    assert!(text.contains("content-type: application/x-x509-ca-cert"));
+    assert!(text.contains("filename=\"lantaran-ca.crt\""));
+    // The body is DER: binary, starting with an ASN.1 SEQUENCE.
+    let body_start = reply.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    assert_eq!(reply[body_start], 0x30);
+
+    let pem = send(
+        proxy.addr,
+        "GET /lantaran-ca.pem HTTP/1.1\r\nHost: proxy\r\nConnection: close\r\n\r\n".to_owned(),
+    )
+    .await;
+    assert!(
+        pem.ends_with(&proxy.ca_pem),
+        "the PEM download must be the root certificate"
+    );
+    assert!(proxy.events.try_recv().is_none());
+}
+
+#[tokio::test]
+async fn the_certificate_page_is_reachable_through_the_proxy_by_name() {
+    let mut proxy = start_proxy(SslProxyingList::new()).await;
+
+    let reply = send(
+        proxy.addr,
+        "GET http://lantaran.ssl/ HTTP/1.1\r\nHost: lantaran.ssl\r\n\
+         User-Agent: Mozilla/5.0 (Linux; Android 15; Pixel 8)\r\nConnection: close\r\n\r\n"
+            .to_owned(),
+    )
+    .await;
+
+    assert!(
+        reply.starts_with("HTTP/1.1 200"),
+        "unexpected reply: {reply}"
+    );
+    assert!(
+        reply.contains("CA certificate"),
+        "Android steps expected: {reply}"
+    );
+    assert!(proxy.events.try_recv().is_none());
+}
+
+#[tokio::test]
+async fn an_unknown_path_on_the_certificate_page_is_not_found() {
+    let proxy = start_proxy(SslProxyingList::new()).await;
+
+    let reply = send(
+        proxy.addr,
+        "GET /etc/passwd HTTP/1.1\r\nHost: proxy\r\nConnection: close\r\n\r\n".to_owned(),
+    )
+    .await;
+    assert!(
+        reply.starts_with("HTTP/1.1 404"),
+        "unexpected reply: {reply}"
     );
 }

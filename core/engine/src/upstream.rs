@@ -19,7 +19,7 @@ use hudsucker::rustls::{
 };
 use std::{
     io,
-    sync::{Arc, RwLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 
 /// Hosts whose certificates are accepted without being checked.
@@ -43,7 +43,7 @@ pub(crate) fn client_config(
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     // Certificates that cannot be read are skipped: one broken entry in the
     // system store should not stop the proxy.
-    roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+    roots.add_parsable_certificates(system_roots().iter().cloned());
 
     let checked =
         WebPkiServerVerifier::builder_with_provider(Arc::new(roots), Arc::clone(&provider))
@@ -62,6 +62,14 @@ pub(crate) fn client_config(
         }))
         .with_no_client_auth();
     Ok(config)
+}
+
+/// The operating system's trusted certificates, read once per process.
+/// Reading the macOS keychain takes long enough to matter when several
+/// engines start together.
+fn system_roots() -> &'static [CertificateDer<'static>] {
+    static ROOTS: OnceLock<Vec<CertificateDer<'static>>> = OnceLock::new();
+    ROOTS.get_or_init(|| rustls_native_certs::load_native_certs().certs)
 }
 
 /// Checks certificates normally, and accepts any certificate for an exempt

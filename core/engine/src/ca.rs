@@ -55,6 +55,17 @@ impl RootCa {
         &self.cert_pem
     }
 
+    /// The certificate in DER form, as Android and Windows expect it.
+    pub fn cert_der(&self) -> Vec<u8> {
+        use hudsucker::rustls::pki_types::{CertificateDer, pem::PemObject};
+
+        // The PEM was produced by this type and checked by `issuer()` when
+        // it was loaded, so it parses.
+        CertificateDer::from_pem_slice(self.cert_pem.as_bytes())
+            .map(|der| der.to_vec())
+            .unwrap_or_default()
+    }
+
     /// Where the certificate is stored on disk.
     pub fn cert_path(&self) -> &Path {
         &self.cert_path
@@ -127,6 +138,17 @@ mod tests {
         assert!(ca.cert_pem().starts_with("-----BEGIN CERTIFICATE-----"));
         assert!(ca.cert_path().exists());
         assert!(dir.path().join(KEY_FILE).exists());
+    }
+
+    #[test]
+    fn der_form_is_the_same_certificate() {
+        let dir = tempfile::tempdir().unwrap();
+        let ca = RootCa::load_or_create(dir.path()).unwrap();
+        let der = ca.cert_der();
+
+        // A DER certificate is an ASN.1 SEQUENCE.
+        assert_eq!(der.first(), Some(&0x30));
+        assert!(der.len() > 100);
     }
 
     #[test]

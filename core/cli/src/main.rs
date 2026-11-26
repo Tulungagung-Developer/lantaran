@@ -1,7 +1,7 @@
 use clap::Parser;
 use lantaran_engine::{
-    Direction, Engine, EventStream, FlowEvent, FlowId, Headers, HostPattern, RootCa,
-    SslProxyingList,
+    Direction, Engine, EventStream, FlowEvent, FlowId, Headers, HostPattern, ONBOARDING_HOST,
+    RootCa, SslProxyingList,
 };
 use std::{
     error::Error,
@@ -36,6 +36,11 @@ struct Args {
     /// Directory that holds the root certificate and its key.
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
+
+    /// The address to show for the certificate page, when the one Lantaran
+    /// picks is wrong, for example with a VPN or several network interfaces.
+    #[arg(long, value_name = "IP")]
+    advertise: Option<IpAddr>,
 
     /// Also print headers and the start of each body.
     #[arg(short, long)]
@@ -74,11 +79,21 @@ async fn run(args: Args) -> Result<(), Box<dyn Error>> {
         .map_err(|e| format!("could not listen on {}: {e}", args.listen))?;
     let bound = listener.local_addr()?;
 
-    println!("Listening on {}", advertised_addr(bound));
+    let shown = match args.advertise {
+        Some(ip) => SocketAddr::new(ip, bound.port()),
+        None => advertised_addr(bound),
+    };
+    println!("Listening on {shown}");
     if bound.ip().is_loopback() {
         println!("Only this machine can connect. Pass --listen 0.0.0.0:9090 to accept phones.");
+        println!(
+            "Certificate page: http://{shown}/ here, or http://{ONBOARDING_HOST}/ from a simulator or emulator"
+        );
     } else {
         println!("Any device on this network can use this proxy while it runs.");
+        let page = format!("http://{shown}/");
+        println!("Certificate page: {page}  (or http://{ONBOARDING_HOST}/ once the proxy is set)");
+        print_qr(&page);
     }
     println!("Root certificate: {}", ca.cert_path().display());
     if args.ssl.is_empty() {
@@ -250,6 +265,21 @@ fn printable(text: &str) -> String {
             shown
         })
         .collect()
+}
+
+/// Prints a QR code a phone camera can open, using half-height blocks so it
+/// stays small.
+fn print_qr(text: &str) {
+    use qrcode::{QrCode, render::unicode::Dense1x2};
+
+    if let Ok(code) = QrCode::new(text) {
+        let image = code
+            .render::<Dense1x2>()
+            .dark_color(Dense1x2::Light)
+            .light_color(Dense1x2::Dark)
+            .build();
+        println!("{image}");
+    }
 }
 
 /// The address to type into a phone. A wildcard listen address is replaced by

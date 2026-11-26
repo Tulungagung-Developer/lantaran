@@ -3,12 +3,13 @@ use crate::{
     capture::{self, BodyStore, FlowTracker, Tap, TapSink},
     events::{DEFAULT_EVENT_CAPACITY, EventQueue, EventStream},
     guard::{self, Verdict},
+    onboarding::{self, CertificateFiles, ONBOARDING_HOST},
     upstream::{self, ExemptHosts},
 };
 use hudsucker::{
     Body, HttpContext, HttpHandler, Proxy, RequestOrResponse,
     certificate_authority::RcgenAuthority,
-    hyper::{HeaderMap, Method, Request, Response, StatusCode},
+    hyper::{HeaderMap, Method, Request, Response, StatusCode, header::USER_AGENT},
     hyper_util::client::legacy::Error as UpstreamError,
     rustls::crypto::aws_lc_rs,
     tokio_tungstenite::Connector,
@@ -33,9 +34,6 @@ pub const DEFAULT_BODY_LIMIT: usize = 5 * 1024 * 1024;
 /// are dropped first.
 pub const DEFAULT_BODY_BUDGET: usize = 256 * 1024 * 1024;
 
-const DIRECT_REQUEST_NOTICE: &str = "Lantaran is running.\n\
-Set this address as the HTTP proxy in your device's Wi-Fi settings to capture its traffic.\n";
-
 const PRIVATE_REASON: &str =
     "refused the request: the address is private to the machine running the proxy";
 const UNRESOLVED_REASON: &str = "refused the request: the host name could not be resolved";
@@ -53,6 +51,7 @@ struct Shared {
     bodies: BodyStore,
     body_limit: AtomicUsize,
     exempt_hosts: ExemptHosts,
+    certificate: CertificateFiles,
 }
 
 impl Engine {
@@ -63,6 +62,10 @@ impl Engine {
     pub fn new(ca: RootCa, ssl_proxying: SslProxyingList) -> (Self, EventStream) {
         let events = EventQueue::new(DEFAULT_EVENT_CAPACITY);
         let stream = EventStream::new(Arc::clone(&events));
+        let certificate = CertificateFiles {
+            pem: ca.cert_pem().to_owned().into(),
+            der: ca.cert_der().into(),
+        };
         let shared = Arc::new(Shared {
             ssl_proxying: RwLock::new(ssl_proxying),
             events,
@@ -70,6 +73,7 @@ impl Engine {
             bodies: BodyStore::new(DEFAULT_BODY_BUDGET),
             body_limit: AtomicUsize::new(DEFAULT_BODY_LIMIT),
             exempt_hosts: ExemptHosts::default(),
+            certificate,
         });
 
         (Self { ca, shared }, stream)
@@ -193,10 +197,26 @@ struct Handler {
 
 impl HttpHandler for Handler {
     async fn handle_request(&mut self, ctx: &HttpContext, req: Request<Body>) -> RequestOrResponse {
-        // No host in the URL means the client is talking to the proxy itself,
-        // for example a browser opened on the proxy address.
-        let Some(destination) = req.uri().authority() else {
-            return Response::new(Body::from(DIRECT_REQUEST_NOTICE)).into();
+        // The certificate page: either the proxy's own address opened
+        // directly (no host in the URL), or lantaran.ssl through the proxy.
+        // It is answered before the guard, which would refuse the made-up
+        // name, and it is never recorded as a flow.
+        let destination = match req.uri().authority() {
+            Some(authority)
+                if req.method() == Method::CONNECT
+                    || !authority.host().eq_ignore_ascii_case(ONBOARDING_HOST) =>
+            {
+                authority
+            }
+            _ => {
+                let user_agent = req
+                    .headers()
+                    .get(USER_AGENT)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default();
+                return onboarding::respond(req.uri().path(), user_agent, &self.shared.certificate)
+                    .into();
+            }
         };
 
         // Checked on every request, not only on CONNECT: an HTTP/2 request
