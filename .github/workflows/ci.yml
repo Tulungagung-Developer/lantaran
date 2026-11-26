@@ -87,3 +87,5 @@ jobs:
           workspaces: core
       - name: Build the engine and its Swift bindings
         run: apps/macos/scripts/build-core.sh --debug
+      - name: Build the app
+        run: swift build --package-path apps/macos

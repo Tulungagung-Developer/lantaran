@@ -8,13 +8,14 @@ a native app for each desktop OS on top: macOS first, then Windows, then Linux.
 
 ## Status
 
-Early. The engine and a command line tool work; the desktop apps do not exist yet.
+Early. The engine, a command line tool and a first macOS app work.
 
 | Works today | Planned next |
 | --- | --- |
 | HTTP proxy, HTTP/1.1 and HTTP/2 | WebSocket frames |
 | HTTPS decryption for the hosts you list | Guided iOS and Android setup |
-| Untouched tunnelling for every other host | macOS app |
+| Untouched tunnelling for every other host | Map Local and Map Remote |
+| macOS app: traffic table, inspector, SSL proxying list | |
 | Headers and bodies, decoded for display (`--verbose`) | |
 | Certificate download page and QR code | |
 | Root certificate created on first run | |
@@ -23,7 +24,27 @@ Each release is a [milestone](https://github.com/Tulungagung-Developer/lantaran/
 [roadmap](https://github.com/Tulungagung-Developer/lantaran/issues/34) lists everything planned, including
 work that has no release yet.
 
-## Try it
+## macOS app
+
+You need Xcode (Swift 6) and [Rust](https://rustup.rs) 1.86 or newer.
+
+```sh
+apps/macos/scripts/build-app.sh
+open apps/macos/build/Lantaran.app
+```
+
+The first build of the engine takes a few minutes. The app listens on port 9090,
+the same as Proxyman; quit Proxyman first or pick another port in Settings (⌘,).
+Use **Connect Device** in the toolbar to set up a phone; the first time, it asks
+to accept connections from other devices on the network, which is off until then.
+**SSL Proxying** chooses which hosts to decrypt. The app and the command line tool share the root
+certificate, so a device set up with one works with the other.
+
+To work on the app in Xcode, run `apps/macos/scripts/build-core.sh` once, then
+open `apps/macos/Package.swift`. Run `build-core.sh` again after changing the
+Rust code.
+
+## Try it from the command line
 
 You need [Rust](https://rustup.rs) 1.86 or newer.
 
@@ -75,6 +96,8 @@ core/           Rust workspace
   rules/        which hosts to decrypt; later map, block and breakpoint rules
   engine/       root certificate, interception, flow events
   cli/          the `lantaran` command
+  ffi/          bindings the desktop apps use (uniffi)
+apps/macos/     the macOS app (Swift package)
 docs/           architecture notes
 ```
 
