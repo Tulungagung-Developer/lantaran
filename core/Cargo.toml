@@ -10,6 +10,8 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/Tulungagung-Developer/lantaran"
 
 [workspace.dependencies]
+# Already in the tree through rustls; used directly for SHA-256.
+aws-lc-rs = "1"
 lantaran-engine = { path = "engine" }
 lantaran-rules = { path = "rules" }
 bytes = "1"

@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 lantaran-rules.workspace = true
+aws-lc-rs.workspace = true
 bytes.workspace = true
 hudsucker.workspace = true
 http-body-util.workspace = true
