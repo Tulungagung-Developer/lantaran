@@ -89,3 +89,5 @@ jobs:
         run: apps/macos/scripts/build-core.sh --debug
       - name: Build the app
         run: swift build --package-path apps/macos
+      - name: Test the app
+        run: swift test --package-path apps/macos

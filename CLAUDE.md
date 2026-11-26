@@ -39,10 +39,13 @@ Port 9090 is the default and is also Proxyman's default; pick another port if Pr
 ```sh
 apps/macos/scripts/build-core.sh --debug   # Rust engine -> XCFramework + Swift bindings
 swift build --package-path apps/macos       # the app
+swift test --package-path apps/macos        # its unit tests
 apps/macos/scripts/build-app.sh             # release build, wrapped and signed as apps/macos/build/Lantaran.app
 ```
 
-`build-core.sh` generates `apps/macos/Frameworks/` and `apps/macos/Sources/LantaranCore/lantaran_ffi.swift`; both are ignored by git, so run it after cloning and after every change to `core/ffi` or anything it calls. The app keeps its settings in the `com.github.tulungagung-developer.lantaran` defaults domain and shares the root certificate with the CLI in `~/Library/Application Support/Lantaran`.
+`build-core.sh` generates `apps/macos/Frameworks/` and `apps/macos/Sources/LantaranCore/lantaran_ffi.swift`; both are ignored by git, so run it after cloning and after every change to `core/ffi` or anything it calls. `SystemProxy` changes the Mac's own HTTP/HTTPS proxy (the iOS Simulator has none of its own). It must always be reversible: it writes every service's previous settings to `system-proxy-backup.json` before changing anything, restores on stop and on quit, and restores at launch if that file is still there. Test changes to it by force-killing the app with the proxy on and relaunching.
+
+The app keeps its settings in the `com.github.tulungagung-developer.lantaran` defaults domain and shares the root certificate with the CLI in `~/Library/Application Support/Lantaran`.
 
 ## Architecture
 

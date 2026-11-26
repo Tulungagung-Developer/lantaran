@@ -9,6 +9,7 @@ struct ConnectDeviceSheet: View {
 
     enum Platform: String, CaseIterable, Identifiable {
         case ios = "iPhone or iPad"
+        case simulator = "iOS Simulator"
         case android = "Android"
         case emulator = "Android Emulator"
         var id: String { rawValue }
@@ -26,7 +27,9 @@ struct ConnectDeviceSheet: View {
             .pickerStyle(.segmented)
             .labelsHidden()
 
-            if platform == .emulator {
+            if platform == .simulator {
+                SimulatorSteps()
+            } else if platform == .emulator {
                 emulatorSteps
             } else if let address = model.addressForDevices {
                 deviceSteps(address: address)
@@ -93,6 +96,65 @@ struct ConnectDeviceSheet: View {
             Step(number: 2, text: "In the emulator's browser open http://\(onboardingHost())/ and follow the steps to install the certificate.")
             Step(number: 3, text: "Browsers will be readable. Apps need a debug network_security_config that trusts user certificates, or a system certificate on a Google APIs image.")
         }
+    }
+}
+
+private struct SimulatorSteps: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Step(number: 1, text: "Install the certificate in each simulator you use. Lantaran installs it as a trusted root, so there is nothing to switch on in the simulator.")
+            VStack(alignment: .leading, spacing: 6) {
+                if model.bootedSimulators.isEmpty {
+                    Text("No simulator is running. Start one from Xcode or the Simulator app, then refresh.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.bootedSimulators) { device in
+                        HStack {
+                            Image(systemName: "iphone")
+                            Text(device.name)
+                            Text(device.runtime).foregroundStyle(.secondary)
+                            Spacer()
+                            if model.simulatorsWithCertificate.contains(device.id) {
+                                Label("Installed", systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            } else {
+                                Button("Install Certificate") { model.installCertificate(in: device) }
+                            }
+                        }
+                    }
+                }
+                if let message = model.simulatorMessage {
+                    Text(message).font(.caption).foregroundStyle(.red)
+                }
+                Button("Refresh") { model.refreshSimulators() }
+                    .controlSize(.small)
+            }
+            .padding(.leading, 28)
+
+            Step(number: 2, text: "The simulator uses this Mac's network settings, so route this Mac's traffic through Lantaran:")
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Toggle("Route this Mac's traffic through Lantaran", isOn: Binding(
+                        get: { model.systemProxyOn },
+                        set: { model.setSystemProxy($0) }
+                    ))
+                    .disabled(model.changingSystemProxy || !model.running)
+                    if model.changingSystemProxy {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                Text("All of this Mac's HTTP and HTTPS traffic then passes through Lantaran too. Your previous proxy settings come back when you turn this off, stop the proxy or quit. macOS may ask for your password.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.leading, 28)
+
+            Step(number: 3, text: "Add the hosts you want to read to the SSL Proxying List, then reload them in the simulator. Apps keep connections open, so relaunch an app if its requests stay undecrypted.")
+        }
+        .onAppear { model.refreshSimulators() }
     }
 }
 

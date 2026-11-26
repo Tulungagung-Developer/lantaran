@@ -25,5 +25,11 @@ let package = Package(
             path: "Sources/Lantaran",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        .testTarget(
+            name: "LantaranTests",
+            dependencies: ["Lantaran"],
+            path: "Tests/LantaranTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )
