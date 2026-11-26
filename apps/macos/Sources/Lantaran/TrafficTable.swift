@@ -256,7 +256,7 @@ struct TrafficTable: NSViewRepresentable {
             case .state: return ""
             case .id: return String(flow.id)
             case .url: return flow.url
-            case .client: return flow.client
+            case .client: return flow.app
             case .method: return flow.method
             case .status:
                 switch flow.state {

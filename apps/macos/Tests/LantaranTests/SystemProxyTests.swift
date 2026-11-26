@@ -77,7 +77,7 @@ final class BodyFormatterTests: XCTestCase {
 
 final class CurlTests: XCTestCase {
     func testTheMethodIsQuoted() {
-        var flow = Flow.request(id: 1, client: "127.0.0.1", startedAt: 0, method: "GET|id",
+        var flow = Flow.request(id: 1, client: "127.0.0.1", clientPort: 1, startedAt: 0, method: "GET|id",
                                 url: "https://example.com/", version: "HTTP/1.1", headers: [])
         flow.method = "GET|id"
         XCTAssertTrue(Curl.command(for: flow, body: nil).contains("-X 'GET|id'"))

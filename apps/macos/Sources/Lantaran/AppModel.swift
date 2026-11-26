@@ -5,8 +5,10 @@ import Observation
 
 enum SidebarItem: Hashable {
     case all
-    case client(String)
-    case host(String)
+    case device(Device)
+    case app(Device, String)
+    case appDomain(Device, String, String)
+    case domain(String)
 }
 
 /// Everything the window shows, and the one engine behind it.
@@ -24,6 +26,20 @@ final class AppModel {
     private(set) var revision = 0
     private var indexByID: [UInt64: Int] = [:]
     private(set) var droppedEvents: UInt64 = 0
+
+    // The sidebar's counts, and what is known about where flows come from.
+    private(set) var tree = SidebarTree()
+    private(set) var simulatorNames: [String: String] = [:]
+    /// "iPhone", "iPad" or "Android" per remote address, from a User-Agent.
+    private(set) var remoteKinds: [String: String] = [:]
+    @ObservationIgnored private var liveProcesses: [UInt16: ClientProcess] = [:]
+    @ObservationIgnored private var liveProcessesScannedAt = Date.distantPast
+    @ObservationIgnored private var waitingPorts: [UInt16: [UInt64]] = [:]
+    @ObservationIgnored private var scanning = false
+    @ObservationIgnored private var scanAgain = false
+    @ObservationIgnored private var loadingSimulatorNames = false
+    @ObservationIgnored private let scanner = ClientProcessScanner()
+    @ObservationIgnored private let scanQueue = DispatchQueue(label: "lantaran.client-processes", qos: .userInitiated)
 
     var selectedFlowID: UInt64?
     var followNewest = true
@@ -371,12 +387,13 @@ final class AppModel {
 
         for event in events {
             switch event {
-            case let .request(id, client, startedAt, method, url, version, headers):
+            case let .request(id, client, clientPort, startedAt, method, url, version, headers):
                 appended.append(insert(.request(
-                    id: id, client: client, startedAt: startedAt, method: method,
-                    url: url, version: version, headers: headers)))
-            case let .tunnel(id, client, authority):
-                appended.append(insert(.tunnel(id: id, client: client, authority: authority)))
+                    id: id, client: client, clientPort: clientPort, startedAt: startedAt,
+                    method: method, url: url, version: version, headers: headers)))
+            case let .tunnel(id, client, clientPort, authority):
+                appended.append(insert(.tunnel(
+                    id: id, client: client, clientPort: clientPort, authority: authority)))
             case let .response(id, status, version, headers, elapsedMs, unverified):
                 update(id) {
                     $0.status = status
@@ -403,6 +420,9 @@ final class AppModel {
     }
 
     private func insert(_ flow: Flow) -> Int {
+        var flow = flow
+        locate(&flow)
+        tree.add(flow)
         flows.append(flow)
         let index = flows.count - 1
         indexByID[flow.id] = index
@@ -418,6 +438,8 @@ final class AppModel {
 
     func clear() {
         flows.removeAll()
+        tree.removeAll()
+        waitingPorts.removeAll()
         visible.removeAll()
         indexByID.removeAll()
         selectedFlowID = nil
@@ -439,8 +461,15 @@ final class AppModel {
 
     private func passesFilter(_ flow: Flow) -> Bool {
         switch sidebarSelection {
-        case .client(let client) where flow.client != client: return false
-        case .host(let host) where flow.host != host: return false
+        case .device(let device) where flow.device != device:
+            return false
+        case .app(let device, let app) where flow.device != device || flow.app != app:
+            return false
+        case .appDomain(let device, let app, let host)
+            where flow.device != device || flow.app != app || flow.host != host:
+            return false
+        case .domain(let host) where flow.host != host:
+            return false
         default: break
         }
         let text = filterText.trimmingCharacters(in: .whitespaces)
@@ -450,14 +479,136 @@ final class AppModel {
             || (flow.status.map { String($0).hasPrefix(text) } ?? false)
     }
 
-    /// Flow counts per device and per host, for the sidebar.
-    var clients: [(String, Int)] { counts(\.client) }
-    var hosts: [(String, Int)] { counts(\.host) }
+    // MARK: Where flows come from
 
-    private func counts(_ key: KeyPath<Flow, String>) -> [(String, Int)] {
-        var counts: [String: Int] = [:]
-        for flow in flows { counts[flow[keyPath: key], default: 0] += 1 }
-        return counts.sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+    /// Files a new flow under a device and app. Traffic from another device
+    /// is named from its User-Agent. Local traffic (this Mac, simulators,
+    /// emulators) is matched to the process that opened the connection.
+    private func locate(_ flow: inout Flow) {
+        let userAgent = flow.userAgent
+        flow.app = UserAgent.appName(userAgent) ?? "Unknown"
+
+        guard Self.isLoopback(flow.client) else {
+            flow.device = .remote(ip: flow.client)
+            if remoteKinds[flow.client] == nil, let kind = UserAgent.deviceKind(userAgent) {
+                remoteKinds[flow.client] = kind
+            }
+            return
+        }
+
+        flow.device = .mac
+        // Ports are reused once a connection closes, so an old scan is not
+        // trusted for long.
+        if Date().timeIntervalSince(liveProcessesScannedAt) < 30,
+           let process = liveProcesses[flow.clientPort] {
+            attribute(&flow, to: process)
+        } else {
+            waitingPorts[flow.clientPort, default: []].append(flow.id)
+            scanClientProcesses()
+        }
+    }
+
+    private func attribute(_ flow: inout Flow, to process: ClientProcess) {
+        if let udid = process.simulatorUDID {
+            flow.device = .simulator(udid: udid)
+            flow.app = process.name
+            flow.bundlePath = process.bundlePath
+            if simulatorNames[udid] == nil { loadSimulatorNames() }
+        } else if process.isAndroidEmulator {
+            // The emulator carries every app's traffic; keep the User-Agent's name.
+            flow.device = .androidEmulator
+        } else {
+            flow.device = .mac
+            flow.app = process.name
+            flow.bundlePath = process.bundlePath
+        }
+    }
+
+    private func scanClientProcesses() {
+        guard !scanning else {
+            scanAgain = true
+            return
+        }
+        guard let proxyPort = boundAddress.flatMap({ UInt16($0.split(separator: ":").last ?? "") }) else {
+            return
+        }
+        scanning = true
+        let waitingAtStart = Set(waitingPorts.keys)
+        let scanner = scanner
+        scanQueue.async {
+            let live = scanner.scan(proxyPort: proxyPort)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self.finishScan(live, waitingAtStart: waitingAtStart) }
+            }
+        }
+    }
+
+    private func finishScan(_ live: [UInt16: ClientProcess], waitingAtStart: Set<UInt16>) {
+        liveProcesses = live
+        liveProcessesScannedAt = Date()
+        scanning = false
+
+        var moved = false
+        for (port, ids) in waitingPorts {
+            if let process = live[port] {
+                for id in ids {
+                    guard let index = indexByID[id] else { continue }
+                    tree.remove(flows[index])
+                    attribute(&flows[index], to: process)
+                    tree.add(flows[index])
+                }
+                waitingPorts[port] = nil
+                moved = true
+            } else if waitingAtStart.contains(port) {
+                // Closed before the scan saw it: stays under This Mac.
+                waitingPorts[port] = nil
+            }
+        }
+
+        if moved {
+            switch sidebarSelection {
+            case .device, .app, .appDomain: refilter()
+            default: revision += 1
+            }
+        }
+        if scanAgain {
+            scanAgain = false
+            if !waitingPorts.isEmpty { scanClientProcesses() }
+        }
+    }
+
+    private func loadSimulatorNames() {
+        guard !loadingSimulatorNames else { return }
+        loadingSimulatorNames = true
+        Task.detached {
+            let devices = Simulators.booted()
+            await MainActor.run {
+                for device in devices { self.simulatorNames[device.id] = device.name }
+                self.loadingSimulatorNames = false
+            }
+        }
+    }
+
+    private static func isLoopback(_ address: String) -> Bool {
+        address == "::1" || address.hasPrefix("127.") || address == "::ffff:127.0.0.1"
+    }
+
+    func name(of device: Device) -> String {
+        switch device {
+        case .mac: "This Mac"
+        case .simulator(let udid): simulatorNames[udid] ?? "Simulator"
+        case .androidEmulator: "Android Emulator"
+        case .remote(let ip): remoteKinds[ip].map { "\($0) · \(ip)" } ?? ip
+        }
+    }
+
+    /// Devices in sidebar order.
+    var sidebarDevices: [Device] {
+        tree.devices.keys.sorted { a, b in
+            let (ka, kb) = (a.sortKey, b.sortKey)
+            if ka.0 != kb.0 { return ka.0 < kb.0 }
+            return name(of: a).localizedStandardCompare(name(of: b)) == .orderedAscending
+        }
     }
 
     // MARK: Bodies
