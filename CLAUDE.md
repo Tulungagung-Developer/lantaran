@@ -55,6 +55,8 @@ hudsucker clones the handler per request and calls `handle_request` and then `ha
 
 `Tap` (`core/engine/src/capture.rs`) forwards every frame unchanged as it arrives and keeps a copy up to the body limit. Never buffer a body before forwarding it: streaming responses and large downloads depend on this. A `Tap` finishes in `Drop` as well as on the final frame, because hyper stops polling a body once `is_end_stream` is true. Bodies stay out of events; front ends fetch them with `Engine::body`.
 
+Events go through a bounded queue (`core/engine/src/events.rs`) and are read in batches from `EventStream::next_batch`. `Shared::emit` must never wait: when the queue is full the event is dropped and counted. Kept bodies live in `BodyStore` under a total budget, oldest dropped first, so `Engine::body` can return `None` for an old flow.
+
 ### The guard
 
 `core/engine/src/guard.rs` refuses requests from other devices to addresses private to the machine running the proxy (loopback, unspecified, link-local). Without it, any device on the Wi-Fi could reach services bound to localhost here. Clients on the same machine are not restricted. It must stay in the path of every request, not only `CONNECT`, because an HTTP/2 request inside a decrypted connection names its own destination. It fails closed when a host name cannot be resolved. For the same reason the CLI listens on `127.0.0.1` unless `--listen` says otherwise.

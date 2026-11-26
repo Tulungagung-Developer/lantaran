@@ -1,6 +1,7 @@
 use crate::{
     CapturedBody, Direction, Error, FlowEvent, FlowId, Headers, RootCa,
     capture::{self, BodyStore, FlowTracker, Tap, TapSink},
+    events::{DEFAULT_EVENT_CAPACITY, EventQueue, EventStream},
     guard::{self, Verdict},
 };
 use hudsucker::{
@@ -18,13 +19,17 @@ use std::{
     },
     time::SystemTime,
 };
-use tokio::{net::TcpListener, sync::mpsc};
+use tokio::net::TcpListener;
 
 /// How many generated per-host certificates are kept ready for reuse.
 const LEAF_CERT_CACHE: u64 = 1_000;
 
 /// How much of each body is kept by default. The rest still passes through.
 pub const DEFAULT_BODY_LIMIT: usize = 5 * 1024 * 1024;
+
+/// How much memory all kept bodies may use together by default. The oldest
+/// are dropped first.
+pub const DEFAULT_BODY_BUDGET: usize = 256 * 1024 * 1024;
 
 const DIRECT_REQUEST_NOTICE: &str = "Lantaran is running.\n\
 Set this address as the HTTP proxy in your device's Wi-Fi settings to capture its traffic.\n";
@@ -41,28 +46,29 @@ pub struct Engine {
 
 struct Shared {
     ssl_proxying: RwLock<SslProxyingList>,
-    events: mpsc::UnboundedSender<FlowEvent>,
+    events: Arc<EventQueue>,
     next_id: AtomicU64,
     bodies: BodyStore,
     body_limit: AtomicUsize,
 }
 
 impl Engine {
-    /// Creates an engine and the receiving end of its event stream.
-    pub fn new(
-        ca: RootCa,
-        ssl_proxying: SslProxyingList,
-    ) -> (Self, mpsc::UnboundedReceiver<FlowEvent>) {
-        let (events, receiver) = mpsc::unbounded_channel();
+    /// Creates an engine and the reading end of its event stream.
+    ///
+    /// The stream ends once the engine and every connection it served are
+    /// gone.
+    pub fn new(ca: RootCa, ssl_proxying: SslProxyingList) -> (Self, EventStream) {
+        let events = EventQueue::new(DEFAULT_EVENT_CAPACITY);
+        let stream = EventStream::new(Arc::clone(&events));
         let shared = Arc::new(Shared {
             ssl_proxying: RwLock::new(ssl_proxying),
             events,
             next_id: AtomicU64::new(1),
-            bodies: BodyStore::default(),
+            bodies: BodyStore::new(DEFAULT_BODY_BUDGET),
             body_limit: AtomicUsize::new(DEFAULT_BODY_LIMIT),
         });
 
-        (Self { ca, shared }, receiver)
+        (Self { ca, shared }, stream)
     }
 
     /// Replaces the list of hosts to decrypt. Applies to new connections.
@@ -79,7 +85,14 @@ impl Engine {
         self.shared.body_limit.store(bytes, Ordering::Relaxed);
     }
 
+    /// Sets how much memory all kept bodies may use together. Lowering it
+    /// drops the oldest bodies at once.
+    pub fn set_body_budget(&self, bytes: usize) {
+        self.shared.bodies.set_budget(bytes);
+    }
+
     /// The captured body of one side of a flow, once that body has ended.
+    /// Returns `None` if the body was dropped to stay within the budget.
     pub fn body(&self, id: FlowId, direction: Direction) -> Option<CapturedBody> {
         self.shared.bodies.get(id, direction)
     }
@@ -131,8 +144,14 @@ impl TapSink for Shared {
     }
 
     fn emit(&self, event: FlowEvent) {
-        // Nobody listening is not an error: the proxy keeps forwarding traffic.
-        let _ = self.events.send(event);
+        // Never waits: a slow reader loses events, traffic is not slowed.
+        self.events.push(event);
+    }
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        self.events.close();
     }
 }
 
