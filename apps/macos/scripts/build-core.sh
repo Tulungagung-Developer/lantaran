@@ -69,5 +69,7 @@ xcodebuild -create-xcframework \
   -library "$WORK/liblantaran_ffi.a" -headers "$WORK/headers" \
   -output "$APP/Frameworks/LantaranFFI.xcframework" >/dev/null
 
+# The folder holds only generated code, so a fresh checkout does not have it.
+mkdir -p "$APP/Sources/LantaranCore"
 cp "$WORK/swift/lantaran_ffi.swift" "$APP/Sources/LantaranCore/lantaran_ffi.swift"
 echo "Done: apps/macos/Frameworks/LantaranFFI.xcframework"
