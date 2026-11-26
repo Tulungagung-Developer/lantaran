@@ -13,6 +13,7 @@ mod error;
 mod events;
 mod flow;
 mod guard;
+mod network;
 mod onboarding;
 mod upstream;
 
@@ -23,4 +24,5 @@ pub use error::Error;
 pub use events::{BATCH_WINDOW, DEFAULT_EVENT_CAPACITY, EventBatch, EventStream, MAX_BATCH};
 pub use flow::{CapturedBody, Direction, FlowEvent, FlowId, Headers};
 pub use lantaran_rules::{HostPattern, SslProxyingList};
+pub use network::local_network_address;
 pub use onboarding::ONBOARDING_HOST;

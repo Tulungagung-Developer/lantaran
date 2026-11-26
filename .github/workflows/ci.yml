@@ -75,3 +75,15 @@ jobs:
         with:
           name: coverage-lcov
           path: core/lcov.info
+
+  macos-app:
+    name: macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: Build the engine and its Swift bindings
+        run: apps/macos/scripts/build-core.sh --debug

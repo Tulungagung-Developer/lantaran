@@ -1,0 +1,27 @@
+[package]
+name = "lantaran-ffi"
+description = "Bindings that let the desktop apps drive the Lantaran engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# staticlib for the macOS app, cdylib so uniffi-bindgen can read the
+# interface from the built library, lib for Rust tests.
+crate-type = ["lib", "staticlib", "cdylib"]
+name = "lantaran_ffi"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+lantaran-engine.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "sync"] }
+uniffi = { workspace = true, features = ["cli"] }
+
+[dev-dependencies]
+tempfile = "3"
