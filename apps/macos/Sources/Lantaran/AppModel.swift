@@ -471,6 +471,17 @@ final class AppModel {
         return (data, record)
     }
 
+    /// After the root certificate was reset or imported: a running proxy
+    /// starts signing with the new one, and no simulator is known to trust it.
+    func rootCertificateChanged() {
+        simulatorsWithCertificate = []
+        if running, let engine {
+            engine.stop()
+            running = false
+            start()
+        }
+    }
+
     /// Opens Connect Device on the steps for one kind of device.
     func connectDevice(_ platform: DevicePlatform) {
         connectDevicePlatform = platform

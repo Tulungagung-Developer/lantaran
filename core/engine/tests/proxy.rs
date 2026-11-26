@@ -912,6 +912,27 @@ async fn the_proxy_address_serves_the_certificate_page() {
 }
 
 #[tokio::test]
+async fn a_replaced_root_certificate_is_offered_at_once() {
+    let proxy = start_proxy(SslProxyingList::new()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let replacement = RootCa::reset(dir.path()).unwrap();
+    assert_ne!(replacement.cert_pem(), proxy.ca_pem);
+
+    proxy.engine.set_root_ca(replacement.clone());
+
+    let pem = send(
+        proxy.addr,
+        "GET /lantaran-ca.pem HTTP/1.1\r\nHost: proxy\r\nConnection: close\r\n\r\n".to_owned(),
+    )
+    .await;
+    assert!(
+        pem.ends_with(replacement.cert_pem()),
+        "the page must offer the new certificate"
+    );
+    assert_eq!(proxy.engine.root_ca().cert_pem(), replacement.cert_pem());
+}
+
+#[tokio::test]
 async fn the_certificate_downloads_in_both_forms() {
     let mut proxy = start_proxy(SslProxyingList::new()).await;
 

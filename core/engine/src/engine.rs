@@ -41,7 +41,7 @@ const UNRESOLVED_REASON: &str = "refused the request: the host name could not be
 
 /// A proxy that reports the traffic passing through it.
 pub struct Engine {
-    ca: RootCa,
+    ca: RwLock<RootCa>,
     shared: Arc<Shared>,
 }
 
@@ -52,7 +52,7 @@ struct Shared {
     bodies: BodyStore,
     body_limit: AtomicUsize,
     exempt_hosts: ExemptHosts,
-    certificate: CertificateFiles,
+    certificate: RwLock<Arc<CertificateFiles>>,
     map_rules: RwLock<MapRules>,
 }
 
@@ -64,7 +64,7 @@ impl Engine {
     pub fn new(ca: RootCa, ssl_proxying: SslProxyingList) -> (Self, EventStream) {
         let events = EventQueue::new(DEFAULT_EVENT_CAPACITY);
         let stream = EventStream::new(Arc::clone(&events));
-        let certificate = CertificateFiles::new(ca.cert_pem(), ca.cert_der());
+        let certificate = Arc::new(CertificateFiles::new(ca.cert_pem(), ca.cert_der()));
         let shared = Arc::new(Shared {
             ssl_proxying: RwLock::new(ssl_proxying),
             events,
@@ -72,11 +72,42 @@ impl Engine {
             bodies: BodyStore::new(DEFAULT_BODY_BUDGET),
             body_limit: AtomicUsize::new(DEFAULT_BODY_LIMIT),
             exempt_hosts: ExemptHosts::default(),
-            certificate,
+            certificate: RwLock::new(certificate),
             map_rules: RwLock::new(MapRules::default()),
         });
 
-        (Self { ca, shared }, stream)
+        (
+            Self {
+                ca: RwLock::new(ca),
+                shared,
+            },
+            stream,
+        )
+    }
+
+    /// Replaces the root certificate, after [`RootCa::reset`] or
+    /// [`RootCa::import_pkcs12`]. The certificate page offers the new one at
+    /// once; the proxy signs with it from the next [`Engine::serve`], so
+    /// restart a running engine.
+    pub fn set_root_ca(&self, ca: RootCa) {
+        *self
+            .shared
+            .certificate
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Arc::new(CertificateFiles::new(ca.cert_pem(), ca.cert_der()));
+        *self
+            .ca
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = ca;
+    }
+
+    /// The root certificate the next [`Engine::serve`] signs with.
+    pub fn root_ca(&self) -> RootCa {
+        self.ca
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Replaces the list of hosts to decrypt. Applies to new connections.
@@ -132,7 +163,8 @@ impl Engine {
         shutdown: impl Future<Output = ()> + Send + 'static,
     ) -> Result<(), Error> {
         let provider = aws_lc_rs::default_provider();
-        let authority = RcgenAuthority::new(self.ca.issuer()?, LEAF_CERT_CACHE, provider.clone());
+        let authority =
+            RcgenAuthority::new(self.root_ca().issuer()?, LEAF_CERT_CACHE, provider.clone());
 
         // Replaces hudsucker's own connector, which trusts only the public
         // web roots. HTTP and WebSocket must share the same settings.
@@ -162,6 +194,15 @@ impl Engine {
 }
 
 impl Shared {
+    fn certificate(&self) -> Arc<CertificateFiles> {
+        Arc::clone(
+            &self
+                .certificate
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    }
+
     fn next_id(&self) -> FlowId {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
@@ -271,8 +312,12 @@ impl HttpHandler for Handler {
                     .get(USER_AGENT)
                     .and_then(|value| value.to_str().ok())
                     .unwrap_or_default();
-                return onboarding::respond(req.uri().path(), user_agent, &self.shared.certificate)
-                    .into();
+                return onboarding::respond(
+                    req.uri().path(),
+                    user_agent,
+                    &self.shared.certificate(),
+                )
+                .into();
             }
         };
 

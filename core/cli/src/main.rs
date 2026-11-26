@@ -1,4 +1,6 @@
-use clap::Parser;
+mod cert;
+
+use clap::{Parser, Subcommand};
 use lantaran_engine::{
     Direction, Engine, EventStream, FlowEvent, FlowId, Headers, HostPattern, MapLocal, MapRemote,
     MapRules, ONBOARDING_HOST, RootCa, SslProxyingList, UrlPattern, local_network_address,
@@ -6,20 +8,42 @@ use lantaran_engine::{
 use std::{
     error::Error,
     net::{IpAddr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitCode,
     sync::Arc,
 };
 use tokio::net::TcpListener;
 
 /// Capture HTTP and HTTPS traffic from iOS and Android devices.
+///
+/// Without a command, runs the proxy.
 #[derive(Parser)]
 #[command(name = "lantaran", version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    #[command(flatten)]
+    proxy: Args,
+
+    /// Directory that holds the root certificate and its key.
+    #[arg(long, value_name = "DIR", global = true)]
+    data_dir: Option<PathBuf>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Export, import or reset the root certificate.
+    #[command(subcommand)]
+    Cert(cert::CertCommand),
+}
+
+#[derive(clap::Args)]
 struct Args {
     /// Address to listen on. The default accepts only this machine. Pass
     /// 0.0.0.0:9090 to accept phones on the same network; any device on that
     /// network can then use the proxy while it runs.
-    #[arg(long, default_value = "127.0.0.1:9090", value_name = "ADDR")]
+    #[arg(long, default_value = DEFAULT_LISTEN, value_name = "ADDR")]
     listen: SocketAddr,
 
     /// Host to decrypt, such as api.example.com or *.example.com. Repeat for
@@ -45,10 +69,6 @@ struct Args {
     #[arg(long = "map-remote", value_name = "PATTERN=URL")]
     map_remote: Vec<String>,
 
-    /// Directory that holds the root certificate and its key.
-    #[arg(long, value_name = "DIR")]
-    data_dir: Option<PathBuf>,
-
     /// The address to show for the certificate page, when the one Lantaran
     /// picks is wrong, for example with a VPN or several network interfaces.
     #[arg(long, value_name = "IP")]
@@ -59,12 +79,40 @@ struct Args {
     verbose: bool,
 }
 
+impl Args {
+    /// Whether any of the proxy's options were given.
+    fn is_set(&self) -> bool {
+        self.listen != DEFAULT_LISTEN.parse::<SocketAddr>().unwrap_or(self.listen)
+            || !self.ssl.is_empty()
+            || !self.insecure_hosts.is_empty()
+            || !self.map_local.is_empty()
+            || !self.map_remote.is_empty()
+            || self.advertise.is_some()
+            || self.verbose
+    }
+}
+
+const DEFAULT_LISTEN: &str = "127.0.0.1:9090";
+
 /// How much of a body `--verbose` prints.
 const BODY_PREVIEW: usize = 400;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run(Args::parse()).await {
+    let cli = Cli::parse();
+    let result = match data_dir(cli.data_dir) {
+        Ok(data_dir) => match cli.command {
+            // clap cannot keep the proxy's options away from the commands
+            // while sharing --data-dir with them, so check here.
+            Some(_) if cli.proxy.is_set() => {
+                Err("the proxy's options cannot be used with a command".into())
+            }
+            Some(Command::Cert(command)) => cert::run(command, &data_dir),
+            None => run(cli.proxy, &data_dir).await,
+        },
+        Err(err) => Err(err),
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("lantaran: {err}");
@@ -73,15 +121,17 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run(args: Args) -> Result<(), Box<dyn Error>> {
-    let data_dir = match args.data_dir {
-        Some(dir) => dir,
-        None => dirs::data_dir()
+fn data_dir(given: Option<PathBuf>) -> Result<PathBuf, Box<dyn Error>> {
+    match given {
+        Some(dir) => Ok(dir),
+        None => Ok(dirs::data_dir()
             .ok_or("could not find a data directory for this user; pass --data-dir")?
-            .join("Lantaran"),
-    };
+            .join("Lantaran")),
+    }
+}
 
-    let ca = RootCa::load_or_create(&data_dir)?;
+async fn run(args: Args, data_dir: &Path) -> Result<(), Box<dyn Error>> {
+    let ca = RootCa::load_or_create(data_dir)?;
     let ssl_proxying = args.ssl.iter().fold(SslProxyingList::new(), |list, host| {
         list.include(host.as_str())
     });
@@ -107,7 +157,11 @@ async fn run(args: Args) -> Result<(), Box<dyn Error>> {
         println!("Certificate page: {page}  (or http://{ONBOARDING_HOST}/ once the proxy is set)");
         print_qr(&page);
     }
-    println!("Root certificate: {}", ca.cert_path().display());
+    println!(
+        "Root certificate: {} ({})",
+        ca.name(),
+        ca.cert_path().display()
+    );
     if args.ssl.is_empty() {
         println!("Decrypting no hosts. Pass --ssl <HOST> to read HTTPS traffic.");
     } else {

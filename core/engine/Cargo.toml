@@ -11,11 +11,15 @@ repository.workspace = true
 lantaran-rules.workspace = true
 aws-lc-rs.workspace = true
 bytes.workspace = true
+gethostname.workspace = true
 hudsucker.workspace = true
 http-body-util.workspace = true
 hyper-rustls.workspace = true
+p12-keystore.workspace = true
+pem.workspace = true
 rustls-native-certs.workspace = true
 webpki-roots.workspace = true
+x509-parser.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "net", "sync", "rt", "time"] }

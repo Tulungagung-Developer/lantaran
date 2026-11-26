@@ -61,7 +61,7 @@ struct ConnectDeviceSheet: View {
                 Step(number: 1, text: "Join the same Wi-Fi network as this Mac.")
                 Step(number: 2, text: "Scan the code with the camera and follow the steps on the page to install the certificate.")
                 if model.connectDevicePlatform == .ios {
-                    Step(number: 3, text: "Settings › General › About › Certificate Trust Settings: switch on Lantaran Root CA.")
+                    Step(number: 3, text: "Settings › General › About › Certificate Trust Settings: switch on \(model.engine?.certificateName() ?? "Lantaran Root CA").")
                     Step(number: 4, text: "Settings › Wi-Fi › (i) next to the network › Configure Proxy › Manual.")
                 } else {
                     Step(number: 3, text: "Install it under Settings › Security › Encryption & credentials › Install a certificate › CA certificate.")
