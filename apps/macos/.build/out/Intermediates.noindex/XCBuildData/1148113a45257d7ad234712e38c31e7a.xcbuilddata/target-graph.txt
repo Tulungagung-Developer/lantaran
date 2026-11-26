@@ -1,7 +1,0 @@
-Target dependency graph (3 targets)
-Target 'AllExcludingTests' in project 'Aggregate'
-➜ Explicit dependency on target 'Lantaran-product' in project 'Lantaran'
-➜ Explicit dependency on target 'LantaranCore' in project 'Lantaran'
-Target 'Lantaran-product' in project 'Lantaran'
-➜ Explicit dependency on target 'LantaranCore' in project 'Lantaran'
-Target 'LantaranCore' in project 'Lantaran' (no dependencies)
