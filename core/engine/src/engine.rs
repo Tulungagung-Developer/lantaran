@@ -1,4 +1,7 @@
-use crate::{Error, FlowEvent, FlowId, RootCa, guard};
+use crate::{
+    Error, FlowEvent, FlowId, RootCa,
+    guard::{self, Verdict},
+};
 use hudsucker::{
     Body, HttpContext, HttpHandler, Proxy, RequestOrResponse,
     certificate_authority::RcgenAuthority,
@@ -22,9 +25,9 @@ const LEAF_CERT_CACHE: u64 = 1_000;
 const DIRECT_REQUEST_NOTICE: &str = "Lantaran is running.\n\
 Set this address as the HTTP proxy in your device's Wi-Fi settings to capture its traffic.\n";
 
-const REFUSED_NOTICE: &str = "Lantaran refused this request: other devices may not reach \
-addresses that are private to the machine running the proxy.\n";
-const REFUSED_REASON: &str = "refused: the address is private to the machine running the proxy";
+const PRIVATE_REASON: &str =
+    "refused the request: the address is private to the machine running the proxy";
+const UNRESOLVED_REASON: &str = "refused the request: the host name could not be resolved";
 
 /// A proxy that reports the traffic passing through it.
 pub struct Engine {
@@ -124,7 +127,12 @@ impl HttpHandler for Handler {
 
         // Checked on every request, not only on CONNECT: an HTTP/2 request
         // inside a decrypted connection names its own destination.
-        if guard::refuses(ctx.client_addr.ip(), destination).await {
+        let refusal = match guard::check(ctx.client_addr.ip(), destination).await {
+            Verdict::Allow => None,
+            Verdict::Private => Some((StatusCode::FORBIDDEN, PRIVATE_REASON)),
+            Verdict::Unresolved => Some((StatusCode::BAD_GATEWAY, UNRESOLVED_REASON)),
+        };
+        if let Some((status, reason)) = refusal {
             let id = self.shared.next_id();
             self.shared.emit(FlowEvent::Request {
                 id,
@@ -134,11 +142,11 @@ impl HttpHandler for Handler {
             });
             self.shared.emit(FlowEvent::Failed {
                 id,
-                error: REFUSED_REASON.to_owned(),
+                error: reason.to_owned(),
             });
 
-            let mut res = Response::new(Body::from(REFUSED_NOTICE));
-            *res.status_mut() = StatusCode::FORBIDDEN;
+            let mut res = Response::new(Body::from(format!("Lantaran {reason}\n")));
+            *res.status_mut() = status;
             return res.into();
         }
 

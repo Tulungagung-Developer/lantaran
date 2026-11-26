@@ -12,10 +12,21 @@
 use hudsucker::hyper::http::uri::Authority;
 use std::net::IpAddr;
 
-/// Whether a request from `client` to `destination` must be refused.
-pub(crate) async fn refuses(client: IpAddr, destination: &Authority) -> bool {
+/// What to do with a request from a client to a destination.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    Allow,
+    /// The destination is private to this machine.
+    Private,
+    /// The destination could not be resolved, so it could not be checked.
+    /// Refused rather than forwarded: a name that fails to resolve now might
+    /// resolve to a private address a moment later.
+    Unresolved,
+}
+
+pub(crate) async fn check(client: IpAddr, destination: &Authority) -> Verdict {
     if client.to_canonical().is_loopback() {
-        return false;
+        return Verdict::Allow;
     }
 
     let host = destination
@@ -23,15 +34,21 @@ pub(crate) async fn refuses(client: IpAddr, destination: &Authority) -> bool {
         .trim_start_matches('[')
         .trim_end_matches(']');
     if let Ok(ip) = host.parse::<IpAddr>() {
-        return is_private_to_this_machine(ip);
+        return verdict_for(is_private_to_this_machine(ip));
     }
 
     // The port does not affect resolution; lookup_host only requires one.
     match tokio::net::lookup_host((host, 0)).await {
-        Ok(mut addrs) => addrs.any(|addr| is_private_to_this_machine(addr.ip())),
-        // A name that does not resolve reaches nothing; let the normal
-        // upstream error report it.
-        Err(_) => false,
+        Ok(mut addrs) => verdict_for(addrs.any(|addr| is_private_to_this_machine(addr.ip()))),
+        Err(_) => Verdict::Unresolved,
+    }
+}
+
+fn verdict_for(private: bool) -> Verdict {
+    if private {
+        Verdict::Private
+    } else {
+        Verdict::Allow
     }
 }
 
@@ -50,12 +67,16 @@ mod tests {
 
     const PHONE: &str = "192.168.1.20";
 
-    async fn refused(client: &str, destination: &str) -> bool {
-        refuses(
+    async fn verdict(client: &str, destination: &str) -> Verdict {
+        check(
             client.parse().unwrap(),
             &Authority::try_from(destination).unwrap(),
         )
         .await
+    }
+
+    async fn refused(client: &str, destination: &str) -> bool {
+        verdict(client, destination).await == Verdict::Private
     }
 
     #[tokio::test]
@@ -94,7 +115,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unresolvable_name_is_left_to_fail_upstream() {
-        assert!(!refused(PHONE, "no-such-host.invalid:80").await);
+    async fn another_device_is_refused_a_name_that_does_not_resolve() {
+        assert_eq!(
+            verdict(PHONE, "no-such-host.invalid:80").await,
+            Verdict::Unresolved
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_on_this_machine_skips_the_lookup() {
+        assert_eq!(
+            verdict("127.0.0.1", "no-such-host.invalid:80").await,
+            Verdict::Allow
+        );
     }
 }
