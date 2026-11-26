@@ -35,6 +35,12 @@ struct LantaranApp: App {
                     .keyboardShortcut("l", modifiers: [.command, .option])
                 Button("Map Remote…") { model.showMapRemote = true }
                     .keyboardShortcut("r", modifiers: [.command, .option])
+                Divider()
+                Toggle("Route This Mac's Traffic Through Lantaran", isOn: Binding(
+                    get: { model.systemProxyOn },
+                    set: { model.setSystemProxy($0) }
+                ))
+                .keyboardShortcut("m", modifiers: [.command, .option])
             }
         }
 
@@ -54,5 +60,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            AppModel.active?.prepareToQuit()
+        }
     }
 }

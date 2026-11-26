@@ -48,6 +48,19 @@ final class AppModel {
     private(set) var boundAddress: String?
     var lastError: String?
 
+    /// Whether the Mac's own HTTP and HTTPS proxy points at Lantaran, which
+    /// the iOS Simulator needs.
+    private(set) var systemProxyOn = false
+    private(set) var changingSystemProxy = false
+
+    // iOS simulators.
+    private(set) var bootedSimulators: [Simulators.Device] = []
+    private(set) var simulatorsWithCertificate: Set<String> = []
+    private(set) var simulatorMessage: String?
+
+    /// The model of the running app, for the app delegate.
+    nonisolated(unsafe) static weak var active: AppModel?
+
     // Settings, kept in UserDefaults.
     var port: Int {
         didSet { defaults.set(port, forKey: Keys.port) }
@@ -85,6 +98,19 @@ final class AppModel {
         localRules = Self.decode([LocalRule].self, defaults.data(forKey: Keys.localRules)) ?? []
         remoteRules = Self.decode([RemoteRule].self, defaults.data(forKey: Keys.remoteRules)) ?? []
 
+        Self.active = self
+
+        // A backup left behind means Lantaran last quit without putting the
+        // Mac's proxy back, which leaves the Mac pointing at a proxy that is
+        // not running. Fix that first.
+        if SystemProxy.isRedirected {
+            do {
+                try SystemProxy.restore()
+            } catch {
+                lastError = "Lantaran could not restore this Mac's earlier proxy settings: \(error.localizedDescription). Check System Settings › Network › Details › Proxies."
+            }
+        }
+
         do {
             let engine = try LantaranEngine(dataDir: Self.dataDirectory.path)
             self.engine = engine
@@ -118,10 +144,8 @@ final class AppModel {
 
     var statusText: String {
         guard running, let boundAddress else { return "Not running" }
-        if let address = addressForDevices {
-            return "Listening on \(address)"
-        }
-        return "Listening on \(boundAddress)"
+        let address = addressForDevices ?? boundAddress
+        return systemProxyOn ? "Listening on \(address) · Mac proxy on" : "Listening on \(address)"
     }
 
     func start() {
@@ -141,14 +165,94 @@ final class AppModel {
     }
 
     func stop() {
+        // A Mac proxy pointing at a stopped proxy would cut the Mac off.
+        if systemProxyOn {
+            setSystemProxy(false)
+        }
         engine?.stop()
         running = false
         boundAddress = nil
     }
 
+    /// Restarts on the current port and settings. The Mac's proxy, if it
+    /// points at Lantaran, follows to the new port.
     func restart() {
-        stop()
+        engine?.stop()
+        running = false
+        boundAddress = nil
         start()
+        if systemProxyOn {
+            if running {
+                setSystemProxy(true)
+            } else {
+                setSystemProxy(false)
+            }
+        }
+    }
+
+    /// Called as the app quits: puts the Mac's proxy back. Runs
+    /// synchronously because the process is about to end.
+    func prepareToQuit() {
+        guard SystemProxy.isRedirected else { return }
+        try? SystemProxy.restore()
+    }
+
+    // MARK: Mac proxy and simulators
+
+    func setSystemProxy(_ on: Bool) {
+        // Turning it on again is allowed: it re-points the Mac's proxy at
+        // the current port.
+        guard on || systemProxyOn else { return }
+        if on, !running {
+            lastError = "Start the proxy before routing this Mac's traffic through it."
+            return
+        }
+        changingSystemProxy = true
+        let port = port
+        Task.detached {
+            let result: Result<Void, Error> = Result {
+                if on {
+                    try SystemProxy.redirect(to: "127.0.0.1", port: port)
+                } else {
+                    try SystemProxy.restore()
+                }
+            }
+            await MainActor.run {
+                self.changingSystemProxy = false
+                switch result {
+                case .success:
+                    self.systemProxyOn = on
+                case .failure(let error):
+                    self.systemProxyOn = SystemProxy.isRedirected
+                    self.lastError = on
+                        ? "Could not change this Mac's proxy settings: \(error.localizedDescription)"
+                        : "Could not restore this Mac's proxy settings: \(error.localizedDescription). Check System Settings › Network › Details › Proxies."
+                }
+            }
+        }
+    }
+
+    func refreshSimulators() {
+        Task.detached {
+            let devices = Simulators.booted()
+            await MainActor.run { self.bootedSimulators = devices }
+        }
+    }
+
+    func installCertificate(in device: Simulators.Device) {
+        guard let path = engine?.certificatePath() else { return }
+        simulatorMessage = nil
+        Task.detached {
+            let result = Result { try Simulators.installCertificate(path, in: device) }
+            await MainActor.run {
+                switch result {
+                case .success:
+                    self.simulatorsWithCertificate.insert(device.id)
+                case .failure(let error):
+                    self.simulatorMessage = "Could not install the certificate in \(device.name): \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     // MARK: Rules

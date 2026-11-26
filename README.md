@@ -13,10 +13,11 @@ Early. The engine, a command line tool and a first macOS app work.
 | Works today | Planned next |
 | --- | --- |
 | HTTP proxy, HTTP/1.1 and HTTP/2 | WebSocket frames |
-| HTTPS decryption for the hosts you list | Guided iOS and Android setup |
+| HTTPS decryption for the hosts you list | Guided Android setup |
 | Untouched tunnelling for every other host | Breakpoints |
 | macOS app: traffic table, inspector, SSL proxying list | |
 | Map Local and Map Remote | |
+| iPhone setup with a configuration profile; iOS Simulator support | |
 | Headers and bodies, decoded for display (`--verbose`) | |
 | Certificate download page and QR code | |
 | Root certificate created on first run | |
@@ -38,6 +39,11 @@ The first build of the engine takes a few minutes. The app listens on port 9090,
 the same as Proxyman; quit Proxyman first or pick another port in Settings (⌘,).
 Use **Connect Device** in the toolbar to set up a phone; the first time, it asks
 to accept connections from other devices on the network, which is off until then.
+For the **iOS Simulator**, the same sheet installs the certificate into running
+simulators and routes this Mac's traffic through Lantaran (the simulator has no
+proxy settings of its own). Lantaran puts the Mac's previous proxy settings back
+when you turn that off, stop the proxy or quit, and on the next launch if it
+ever quits unexpectedly.
 **SSL Proxying** chooses which hosts to decrypt. The app and the command line tool share the root
 certificate, so a device set up with one works with the other.
 
