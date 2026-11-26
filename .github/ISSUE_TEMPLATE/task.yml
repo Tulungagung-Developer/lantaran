@@ -1,0 +1,35 @@
+name: Task
+description: Work that is not a new feature or a bug - enabling work, cleanup, a spike, or a verification.
+type: Task
+body:
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What this unblocks or what risk it removes.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What to do
+      description: The steps or the question to answer.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: The result that closes this - a passing check, a written decision, a completed checklist.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes for implementers
+      description: Files to start from, constraints, and anything already known. Leave empty if you have none.
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      description: Issues that must be finished first, for example "#1, #6".

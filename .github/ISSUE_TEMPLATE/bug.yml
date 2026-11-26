@@ -1,0 +1,69 @@
+name: Bug
+description: Lantaran does something wrong, or fails to do something it should already do.
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Captured traffic often contains passwords, tokens and cookies. Remove them from anything you paste here. This issue is public.
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact `lantaran` command line you ran.
+      placeholder: |
+        1. lantaran --listen 0.0.0.0:9090 --ssl api.example.com
+        2. On the phone, open ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Lantaran version or commit
+      description: The output of `lantaran --version`, or the commit you built from.
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Where Lantaran runs
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Model, OS version, and whether it is a physical device, a simulator or an emulator.
+      placeholder: iPhone 15, iOS 18.1, physical
+  - type: dropdown
+    id: ssl
+    attributes:
+      label: Is the host on the SSL proxying list?
+      description: Only hosts passed with `--ssl` are decrypted. Everything else is tunnelled unread.
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+        - Not about a specific host
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: What `lantaran` printed around the time of the problem, with secrets removed.
+      render: text

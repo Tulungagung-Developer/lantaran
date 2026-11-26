@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Roadmap
+    url: https://github.com/Tulungagung-Developer/lantaran/issues/34
+    about: What is planned for each release. Look here before asking for a feature.
+  - name: Question or idea
+    url: https://github.com/Tulungagung-Developer/lantaran/discussions
+    about: Ask how something works, or float an idea before it becomes an issue.

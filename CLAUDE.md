@@ -88,5 +88,15 @@ Never add a `Co-authored-by` trailer, a "Generated with" line, or any other AI a
 
 - **Milestones are releases** (`v0.1.0`, `v0.2.0`). The milestone description says what the release delivers. Work not yet planned into a release has no milestone.
 - **Issue types** (Feature, Bug, Task) classify issues. Do not create labels for areas or phases.
-- **The Lantaran SDLC project** (org project #2) holds Status and Area for each issue. New issues are added to it automatically.
+- **The Lantaran SDLC project** (org project #2) holds Status and Area for each issue. New issues are added to it automatically; Area has to be set by hand.
 - Issue #34 is the pinned roadmap. Add new issues to it under the right release.
+
+### Writing issues
+
+Issues follow the forms in `.github/ISSUE_TEMPLATE/`. An issue created with `gh` or the API bypasses the form, so write the same sections by hand and set the type (`gh api -X PATCH repos/Tulungagung-Developer/lantaran/issues/<n> -f type=Feature`).
+
+- **Feature:** `### Why`, `### What to build`, `### Done when`, `### Notes for implementers`, `### Depends on`.
+- **Task:** the same, with `### What to do` in place of `### What to build`.
+- **Bug:** what happened, what was expected, steps to reproduce, version, host OS, device, whether the host is on the SSL proxying list, and output.
+
+"Notes for implementers" is where knowledge about the existing code goes: the function to start from, what hudsucker does at that point, and what has or has not been verified. When work on one issue uncovers something that affects another, add it to that issue's notes instead of leaving it in a commit message. State what was not tested as plainly as what was.

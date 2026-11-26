@@ -75,7 +75,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the reasons 
 
 ## Contributing
 
-Pick an issue from the next release's milestone and comment that you are taking it. Before
+Pick an issue from the next release's milestone and comment that you are taking it. Each issue has
+a "Notes for implementers" section describing the code it touches. To report a bug or propose
+something new, [open an issue](https://github.com/Tulungagung-Developer/lantaran/issues/new/choose)
+with one of the templates. Before
 opening a pull request, run this inside `core/`:
 
 ```sh
