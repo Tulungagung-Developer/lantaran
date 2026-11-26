@@ -8,7 +8,7 @@ struct ContentView: View {
 
         NavigationSplitView {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 290, max: 440)
         } detail: {
             VStack(spacing: 0) {
                 if let error = model.startupError ?? model.lastError {
