@@ -20,7 +20,7 @@ Early. The engine, a command line tool and a first macOS app work.
 | iPhone setup with a configuration profile; iOS Simulator support | |
 | Headers and bodies, decoded for display (`--verbose`) | |
 | Certificate download page and QR code | |
-| Root certificate created on first run | |
+| Root certificate: export, move to another machine, reset | |
 
 Each release is a [milestone](https://github.com/Tulungagung-Developer/lantaran/milestones), and the
 [roadmap](https://github.com/Tulungagung-Developer/lantaran/issues/34) lists everything planned, including
@@ -63,7 +63,7 @@ cargo run -p lantaran-cli -- --listen 0.0.0.0:9090 --ssl api.example.com --ssl '
 ```
 Listening on 192.168.1.3:9090
 Any device on this network can use this proxy while it runs.
-Root certificate: /Users/you/Library/Application Support/Lantaran/lantaran-ca.pem
+Root certificate: Lantaran Root CA (your-mac, 2026-11-27) (/Users/you/Library/Application Support/Lantaran/lantaran-ca.pem)
 Decrypting: api.example.com, *.example.org
 #1 GET https://api.example.com/v1/me  (from 192.168.1.20)
 #1 200 in 212 ms, 512 bytes
@@ -103,6 +103,25 @@ Only hosts passed with `--ssl` are decrypted. When decrypting, Lantaran checks t
 server's certificate against the public roots and every certificate authority
 installed on this machine, so `mkcert` and company CAs work. For a development
 server with a self-signed certificate, add `--insecure-host <HOST>`.
+
+### The root certificate
+
+Lantaran creates its root certificate on first run and keeps it, so a device set
+up once keeps working. Its name includes the machine and the date, to tell
+certificates from different machines apart on a device.
+
+```sh
+lantaran cert show                  # its name and where it is stored
+lantaran cert export ca.crt         # .pem, .crt/.cer/.der, or .p12 with the private key
+lantaran cert import backup.p12     # use another machine's certificate and key here
+lantaran cert reset                 # a new certificate; every device must be set up again
+```
+
+A `.p12` file carries the private key, so it asks for a password; scripts can set
+`LANTARAN_P12_PASSWORD` instead. Importing one on a second machine lets devices that
+trusted the first work with it unchanged. Import and reset ask before replacing the
+current certificate (`--yes` skips that), and a running Lantaran picks the new one up
+when restarted. In the app these are under **Certificate**.
 
 Apps that pin their certificates
 cannot be decrypted, and Android release builds ignore user-installed

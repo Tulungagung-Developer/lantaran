@@ -20,6 +20,11 @@ http-body-util = "0.1"
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "logging", "tls12"] }
 rustls-native-certs = "0.8"
 webpki-roots = "1"
+gethostname = "1"
+p12-keystore = "0.4"
+# Both already in the tree through rcgen; keep the versions in step with it.
+pem = "3"
+x509-parser = "0.18"
 thiserror = "2"
 time = "0.3"
 tokio = "1"

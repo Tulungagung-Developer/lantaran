@@ -34,7 +34,16 @@ struct LantaranApp: App {
                     Button("Emulators…") { model.connectDevice(.emulator) }
                 }
                 Divider()
+                Menu("Export") {
+                    Button("Certificate (.pem)…") { model.exportCertificate(.pem) }
+                    Button("Certificate (.crt)…") { model.exportCertificate(.der) }
+                    Divider()
+                    Button("Certificate and Private Key (.p12)…") { model.exportCertificate(.pkcs12) }
+                }
+                Button("Import Certificate and Private Key (.p12)…") { model.importCertificate() }
                 Button("Show Root Certificate in Finder") { model.revealCertificate() }
+                Divider()
+                Button("Reset Root Certificate…") { model.resetCertificate() }
             }
             CommandMenu("Tools") {
                 Button("SSL Proxying List…") { model.showSSLProxying = true }

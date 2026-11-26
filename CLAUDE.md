@@ -23,7 +23,7 @@ cargo clippy --all-targets -- -D warnings
 cargo run -p lantaran-cli -- --ssl example.com         # binary is named `lantaran`
 ```
 
-CI runs `cargo fmt --all --check`, clippy with `-D warnings` and the tests on macOS, Linux and Windows. All three must pass, so anything Unix-only needs a `#[cfg(unix)]` guard. A separate Linux job measures coverage with `cargo-llvm-cov` and fails below 85% of lines in the engine and rules (the CLI's `main.rs` is excluded). The summary is on each run's page; raise the threshold in `.github/workflows/ci.yml` when coverage goes up.
+CI runs `cargo fmt --all --check`, clippy with `-D warnings` and the tests on macOS, Linux and Windows. All three must pass, so anything Unix-only needs a `#[cfg(unix)]` guard. A separate Linux job measures coverage with `cargo-llvm-cov` and fails below 85% of lines in the engine and rules (the CLI is excluded). The summary is on each run's page; raise the threshold in `.github/workflows/ci.yml` when coverage goes up.
 
 To check HTTPS decryption by hand, use a throwaway data directory so the real root certificate is untouched:
 
@@ -83,7 +83,7 @@ The proxy's own connections to servers use the client config from `core/engine/s
 ### Conventions that are easy to miss
 
 - Use hudsucker's re-exports (`hudsucker::rcgen`, `hudsucker::hyper`, `hudsucker::rustls`) instead of adding those crates directly, so versions cannot drift apart.
-- The root certificate is created once in the data directory and then reused. Never regenerate it implicitly: every device that trusts it would have to be set up again.
+- The root certificate is created once in the data directory and then reused. Never regenerate it implicitly: every device that trusts it would have to be set up again. Only `RootCa::reset` and `RootCa::import_pkcs12` replace it, both on an explicit user action that warns first. A running engine takes a new one with `Engine::set_root_ca` and signs with it after the next `serve`.
 - Integration tests (`core/engine/tests/proxy.rs`) talk to a local stand-in server over real sockets and need no network. Keep it that way.
 - Hosts are decrypted only when the user lists them. Do not add a path that decrypts by default.
 

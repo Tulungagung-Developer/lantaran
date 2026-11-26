@@ -122,7 +122,7 @@ pub trait EventListener: Send + Sync {
 pub struct LantaranEngine {
     runtime: Runtime,
     engine: Arc<Engine>,
-    ca: RootCa,
+    data_dir: PathBuf,
     events: Mutex<Option<EventStream>>,
     stop: Mutex<Option<oneshot::Sender<()>>>,
 }
@@ -132,18 +132,19 @@ impl LantaranEngine {
     /// Loads or creates the root certificate in `data_dir`.
     #[uniffi::constructor]
     pub fn new(data_dir: String) -> Result<Arc<Self>, LantaranError> {
-        let ca = RootCa::load_or_create(&PathBuf::from(data_dir)).map_err(LantaranError::from)?;
+        let data_dir = PathBuf::from(data_dir);
+        let ca = RootCa::load_or_create(&data_dir).map_err(LantaranError::from)?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name("lantaran-engine")
             .enable_all()
             .build()
             .map_err(LantaranError::from)?;
-        let (engine, events) = Engine::new(ca.clone(), SslProxyingList::new());
+        let (engine, events) = Engine::new(ca, SslProxyingList::new());
 
         Ok(Arc::new(Self {
             runtime,
             engine: Arc::new(engine),
-            ca,
+            data_dir,
             events: Mutex::new(Some(events)),
             stop: Mutex::new(None),
         }))
@@ -274,11 +275,47 @@ impl LantaranEngine {
     }
 
     pub fn certificate_pem(&self) -> String {
-        self.ca.cert_pem().to_owned()
+        self.engine.root_ca().cert_pem().to_owned()
+    }
+
+    /// The certificate in DER form, for a `.crt` file.
+    pub fn certificate_der(&self) -> Vec<u8> {
+        self.engine.root_ca().cert_der()
     }
 
     pub fn certificate_path(&self) -> String {
-        self.ca.cert_path().display().to_string()
+        self.engine.root_ca().cert_path().display().to_string()
+    }
+
+    /// The name devices show for the certificate.
+    pub fn certificate_name(&self) -> String {
+        self.engine.root_ca().name()
+    }
+
+    /// The certificate and its private key as a PKCS#12 file protected by
+    /// `password`, for moving this setup to another machine.
+    pub fn export_pkcs12(&self, password: String) -> Result<Vec<u8>, LantaranError> {
+        self.engine
+            .root_ca()
+            .to_pkcs12(&password)
+            .map_err(LantaranError::from)
+    }
+
+    /// Replaces the root certificate and key with the ones in a PKCS#12
+    /// file. Restart a running proxy afterwards so it signs with them.
+    pub fn import_pkcs12(&self, data: Vec<u8>, password: String) -> Result<(), LantaranError> {
+        let ca =
+            RootCa::import_pkcs12(&self.data_dir, &data, &password).map_err(LantaranError::from)?;
+        self.engine.set_root_ca(ca);
+        Ok(())
+    }
+
+    /// Creates a new root certificate and key. Every device that trusted the
+    /// old one has to be set up again. Restart a running proxy afterwards.
+    pub fn reset_certificate(&self) -> Result<(), LantaranError> {
+        let ca = RootCa::reset(&self.data_dir).map_err(LantaranError::from)?;
+        self.engine.set_root_ca(ca);
+        Ok(())
     }
 }
 
@@ -485,5 +522,24 @@ mod tests {
                 .starts_with("-----BEGIN CERTIFICATE-----")
         );
         assert!(engine.certificate_path().ends_with("lantaran-ca.pem"));
+        assert_eq!(engine.certificate_der().first(), Some(&0x30));
+        assert!(engine.certificate_name().starts_with("Lantaran Root CA"));
+    }
+
+    #[test]
+    fn reset_and_import_replace_the_certificate() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let a = LantaranEngine::new(first.path().display().to_string()).unwrap();
+        let b = LantaranEngine::new(second.path().display().to_string()).unwrap();
+        let original = a.certificate_pem();
+
+        let file = a.export_pkcs12("pw".to_owned()).unwrap();
+        assert!(b.import_pkcs12(file.clone(), "nope".to_owned()).is_err());
+        b.import_pkcs12(file, "pw".to_owned()).unwrap();
+        assert_eq!(b.certificate_pem(), original);
+
+        a.reset_certificate().unwrap();
+        assert_ne!(a.certificate_pem(), original);
     }
 }
