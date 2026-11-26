@@ -1,4 +1,4 @@
-use crate::{Error, FlowEvent, FlowId, RootCa};
+use crate::{Error, FlowEvent, FlowId, RootCa, guard};
 use hudsucker::{
     Body, HttpContext, HttpHandler, Proxy, RequestOrResponse,
     certificate_authority::RcgenAuthority,
@@ -21,6 +21,10 @@ const LEAF_CERT_CACHE: u64 = 1_000;
 
 const DIRECT_REQUEST_NOTICE: &str = "Lantaran is running.\n\
 Set this address as the HTTP proxy in your device's Wi-Fi settings to capture its traffic.\n";
+
+const REFUSED_NOTICE: &str = "Lantaran refused this request: other devices may not reach \
+addresses that are private to the machine running the proxy.\n";
+const REFUSED_REASON: &str = "refused: the address is private to the machine running the proxy";
 
 /// A proxy that reports the traffic passing through it.
 pub struct Engine {
@@ -112,16 +116,36 @@ struct Handler {
 
 impl HttpHandler for Handler {
     async fn handle_request(&mut self, ctx: &HttpContext, req: Request<Body>) -> RequestOrResponse {
+        // No host in the URL means the client is talking to the proxy itself,
+        // for example a browser opened on the proxy address.
+        let Some(destination) = req.uri().authority() else {
+            return Response::new(Body::from(DIRECT_REQUEST_NOTICE)).into();
+        };
+
+        // Checked on every request, not only on CONNECT: an HTTP/2 request
+        // inside a decrypted connection names its own destination.
+        if guard::refuses(ctx.client_addr.ip(), destination).await {
+            let id = self.shared.next_id();
+            self.shared.emit(FlowEvent::Request {
+                id,
+                client: ctx.client_addr,
+                method: req.method().to_string(),
+                url: req.uri().to_string(),
+            });
+            self.shared.emit(FlowEvent::Failed {
+                id,
+                error: REFUSED_REASON.to_owned(),
+            });
+
+            let mut res = Response::new(Body::from(REFUSED_NOTICE));
+            *res.status_mut() = StatusCode::FORBIDDEN;
+            return res.into();
+        }
+
         // CONNECT only opens a connection. What it carries is reported later,
         // either as decrypted requests or as a tunnel.
         if req.method() == Method::CONNECT {
             return req.into();
-        }
-
-        // No host in the URL means the client is talking to the proxy itself,
-        // for example a browser opened on the proxy address.
-        if req.uri().authority().is_none() {
-            return Response::new(Body::from(DIRECT_REQUEST_NOTICE)).into();
         }
 
         let id = self.shared.next_id();

@@ -8,6 +8,7 @@ mod ca;
 mod engine;
 mod error;
 mod flow;
+mod guard;
 
 pub use ca::RootCa;
 pub use engine::Engine;

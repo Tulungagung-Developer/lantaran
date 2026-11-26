@@ -12,8 +12,10 @@ use tokio::{net::TcpListener, sync::mpsc};
 #[derive(Parser)]
 #[command(name = "lantaran", version)]
 struct Args {
-    /// Address to listen on. Devices on the same network use it as their HTTP proxy.
-    #[arg(long, default_value = "0.0.0.0:9090", value_name = "ADDR")]
+    /// Address to listen on. The default accepts only this machine. Pass
+    /// 0.0.0.0:9090 to accept phones on the same network; any device on that
+    /// network can then use the proxy while it runs.
+    #[arg(long, default_value = "127.0.0.1:9090", value_name = "ADDR")]
     listen: SocketAddr,
 
     /// Host to decrypt, such as api.example.com or *.example.com. Repeat for
@@ -56,6 +58,11 @@ async fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let bound = listener.local_addr()?;
 
     println!("Listening on {}", advertised_addr(bound));
+    if bound.ip().is_loopback() {
+        println!("Only this machine can connect. Pass --listen 0.0.0.0:9090 to accept phones.");
+    } else {
+        println!("Any device on this network can use this proxy while it runs.");
+    }
     println!("Root certificate: {}", ca.cert_path().display());
     if args.ssl.is_empty() {
         println!("Decrypting no hosts. Pass --ssl <HOST> to read HTTPS traffic.");
