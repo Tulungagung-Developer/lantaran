@@ -124,23 +124,35 @@ pub fn run(command: CertCommand, data_dir: &Path) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-/// Writes `contents` to `file`, readable only by this user when it holds a
-/// private key.
+/// Writes `contents` to `file`. With `private`, the file is readable only by
+/// this user from the moment it exists: it is created new beside `file` and
+/// moved over it, because an existing file would keep its permissions.
 fn write(file: &Path, contents: &[u8], private: bool) -> Result<(), Box<dyn Error>> {
+    let failed = |e: io::Error| format!("could not write {}: {e}", file.display());
+    if !private {
+        return fs::write(file, contents).map_err(|e| failed(e).into());
+    }
+
+    let mut name = file.file_name().ok_or("the file needs a name")?.to_owned();
+    name.push(".new");
+    let temporary = file.with_file_name(name);
+    let _ = fs::remove_file(&temporary);
+
     let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
-    if private {
+    {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    #[cfg(not(unix))]
-    let _ = private;
-
-    options
-        .open(file)
+    let written = options
+        .open(&temporary)
         .and_then(|mut f| f.write_all(contents))
-        .map_err(|e| format!("could not write {}: {e}", file.display()).into())
+        .and_then(|()| fs::rename(&temporary, file));
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written.map_err(|e| failed(e).into())
 }
 
 /// Asks the user to type `yes`, unless `--yes` was given. Refuses when there
@@ -189,6 +201,24 @@ fn new_password() -> Result<String, Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_private_file_replaces_an_open_one_without_widening_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("backup.p12");
+        fs::write(&file, b"old").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write(&file, b"secret", true).unwrap();
+
+        assert_eq!(fs::read(&file).unwrap(), b"secret");
+        let mode = fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert!(!dir.path().join("backup.p12.new").exists());
+    }
 
     #[test]
     fn the_extension_picks_the_format() {

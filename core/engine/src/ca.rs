@@ -84,7 +84,13 @@ impl RootCa {
 
         let cert_pem = pem::encode_config(
             &pem::Pem::new("CERTIFICATE", cert.as_der()),
-            pem::EncodeConfig::new().set_line_ending(pem::LineEnding::LF),
+            // The same line endings rcgen writes, so the file matches one
+            // created here.
+            pem::EncodeConfig::new().set_line_ending(if cfg!(windows) {
+                pem::LineEnding::CRLF
+            } else {
+                pem::LineEnding::LF
+            }),
         );
         // Check before touching the stored pair, so a bad file changes nothing.
         let ca = Self::checked(cert_pem, key.serialize_pem(), dir.join(CERT_FILE))?;
@@ -190,6 +196,8 @@ impl RootCa {
         // a crash leaves either file whole. `checked` refuses a mixed pair.
         let key_tmp = dir.join(format!("{KEY_FILE}.new"));
         let cert_tmp = dir.join(format!("{CERT_FILE}.new"));
+        // A leftover from an interrupted run would keep its own permissions.
+        let _ = fs::remove_file(&key_tmp);
         write_private(&key_tmp, &key_pem)?;
         fs::write(&cert_tmp, &cert_pem).map_err(|e| io_error(&cert_tmp, e))?;
         fs::rename(&key_tmp, &key_path).map_err(|e| io_error(&key_path, e))?;

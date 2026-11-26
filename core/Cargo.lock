@@ -1262,6 +1262,7 @@ dependencies = [
  "lantaran-rules",
  "qrcode",
  "rpassword",
+ "tempfile",
  "tokio",
 ]
 

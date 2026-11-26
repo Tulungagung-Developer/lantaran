@@ -39,10 +39,7 @@ extension AppModel {
                 try engine.certificateDer().write(to: url)
             case .pkcs12:
                 guard let password = Self.askForNewPassword() else { return }
-                let data = try engine.exportPkcs12(password: password)
-                try data.write(to: url)
-                // The key is inside: readable by this user only.
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                try Self.writePrivate(engine.exportPkcs12(password: password), to: url)
             }
         } catch {
             Self.showError("The certificate could not be exported.", error)
@@ -97,6 +94,27 @@ extension AppModel {
             Self.showDone("Created \(engine.certificateName()). Set up your devices again from Connect Device.")
         } catch {
             Self.showError("The certificate could not be reset.", error)
+        }
+    }
+
+    /// Writes a file readable only by this user from the moment it exists:
+    /// created new beside `url` with mode 600 and moved over it, because a
+    /// file already at `url` would keep its own permissions.
+    private static func writePrivate(_ data: Data, to url: URL) throws {
+        let temporary = url.appendingPathExtension("new")
+        unlink(temporary.path)
+        let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        do {
+            try handle.write(contentsOf: data)
+            try handle.close()
+            guard rename(temporary.path, url.path) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        } catch {
+            unlink(temporary.path)
+            throw error
         }
     }
 
