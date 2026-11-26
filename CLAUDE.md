@@ -34,6 +34,16 @@ curl -x http://127.0.0.1:19090 --cacert /tmp/lantaran-dev/lantaran-ca.pem https:
 
 Port 9090 is the default and is also Proxyman's default; pick another port if Proxyman is running.
 
+### macOS app
+
+```sh
+apps/macos/scripts/build-core.sh --debug   # Rust engine -> XCFramework + Swift bindings
+swift build --package-path apps/macos       # the app
+apps/macos/scripts/build-app.sh             # release build, wrapped and signed as apps/macos/build/Lantaran.app
+```
+
+`build-core.sh` generates `apps/macos/Frameworks/` and `apps/macos/Sources/LantaranCore/lantaran_ffi.swift`; both are ignored by git, so run it after cloning and after every change to `core/ffi` or anything it calls. The app keeps its settings in the `com.github.tulungagung-developer.lantaran` defaults domain and shares the root certificate with the CLI in `~/Library/Application Support/Lantaran`.
+
 ## Architecture
 
 Three crates, with dependencies pointing one way: `cli` → `engine` → `rules`.
@@ -41,6 +51,8 @@ Three crates, with dependencies pointing one way: `cli` → `engine` → `rules`
 - **`lantaran-rules`** is pure matching logic with no I/O and no dependencies. Every rule (today the SSL proxying list; later map, block and breakpoint rules) goes here so it can be unit tested alone.
 - **`lantaran-engine`** owns the root certificate, runs the proxy and reports what it sees. Its public surface is deliberately small and message-shaped: construct an `Engine`, call methods on it, read `FlowEvent`s from the receiver. The desktop apps will use this same boundary over FFI, so do not expose shared mutable state or hudsucker types through it.
 - **`lantaran-cli`** is a thin consumer that prints events. It exists to develop and verify the engine without a UI.
+- **`lantaran-ffi`** wraps the engine for the desktop apps with [uniffi](https://github.com/mozilla/uniffi-rs): one `LantaranEngine` object, events delivered in batches to an `EventListener` the app implements. uniffi is pinned to 0.32 because `uniffi-bindgen-cs` (planned for Windows) targets that version.
+- **`apps/macos`** is a Swift package. `AppModel` owns the engine and all state; `EventBridge` moves event batches to the main thread in order; the traffic list is an AppKit `NSTableView` (SwiftUI's `Table` cannot keep up), everything else is SwiftUI.
 
 ### How a request moves through the engine
 
@@ -85,7 +97,7 @@ Follow the [Angular commit message format](https://github.com/angular/angular/bl
 ```
 
 - **Type:** `build`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor` or `test`.
-- **Scope** is the crate or app affected: `engine`, `rules`, `cli`, and later `ffi`, `macos`, `windows`, `linux`. Leave it out for documentation content and for changes that span everything, for example `docs: explain device setup` or `test: cover IPv6 hosts`.
+- **Scope** is the crate or app affected: `engine`, `rules`, `cli`, `ffi`, `macos`, and later `windows`, `linux`. Leave it out for documentation content and for changes that span everything, for example `docs: explain device setup` or `test: cover IPv6 hosts`.
 - **Summary:** imperative present tense, not capitalized, no period at the end.
 - **Body:** required for every type except `docs`, at least 20 characters, imperative present tense. Explain why the change is being made, not what the diff already shows.
 - **Footer:** `Fixes #<issue>` or `Closes #<issue>`, and `BREAKING CHANGE: <summary>` or `DEPRECATED: <what>` followed by a blank line and the details.
