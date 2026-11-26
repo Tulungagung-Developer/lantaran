@@ -9,11 +9,14 @@ repository.workspace = true
 
 [dependencies]
 lantaran-rules.workspace = true
+bytes.workspace = true
 hudsucker.workspace = true
+http-body-util.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["net", "sync", "rt"] }
 
 [dev-dependencies]
+flate2 = "1"
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-util", "time"] }

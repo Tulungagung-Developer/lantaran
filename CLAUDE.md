@@ -46,11 +46,14 @@ Three crates, with dependencies pointing one way: `cli` → `engine` → `rules`
 
 The engine is built on [hudsucker](https://github.com/omjadas/hudsucker), which does the MITM plumbing. `core/engine/src/engine.rs` implements its `HttpHandler`:
 
-1. `handle_request` runs for every request, including `CONNECT` and every request inside a decrypted connection. It first applies the guard (below), then emits `FlowEvent::Request`.
+1. `handle_request` runs for every request, including `CONNECT` and every request inside a decrypted connection. It first applies the guard (below), then emits `FlowEvent::Request` and wraps the request body in a `Tap`.
 2. For `CONNECT`, `should_intercept_connect` asks the SSL proxying list whether to decrypt the host. If not, the connection is tunnelled byte for byte and reported once as `FlowEvent::Tunnel`. An empty list decrypts nothing.
-3. `handle_response` or `handle_error` emits `Response` or `Failed` with the same flow id.
+3. `handle_response` emits `Response` (headers only) and wraps the response body in a `Tap`. `handle_error` emits `Failed` when the server could not be reached.
+4. When the response `Tap` finishes it stores the captured body and emits `Completed`, or `Failed` if the body was cut off or the client went away.
 
 hudsucker clones the handler per request and calls `handle_request` and then `handle_response`/`handle_error` on that same clone. The handler's `pending` field relies on this to tie a response to its request.
+
+`Tap` (`core/engine/src/capture.rs`) forwards every frame unchanged as it arrives and keeps a copy up to the body limit. Never buffer a body before forwarding it: streaming responses and large downloads depend on this. A `Tap` finishes in `Drop` as well as on the final frame, because hyper stops polling a body once `is_end_stream` is true. Bodies stay out of events; front ends fetch them with `Engine::body`.
 
 ### The guard
 

@@ -10,4 +10,7 @@ pub enum Error {
 
     #[error("the proxy stopped: {0}")]
     Proxy(#[from] hudsucker::Error),
+
+    #[error("the body could not be decoded")]
+    Decode,
 }
