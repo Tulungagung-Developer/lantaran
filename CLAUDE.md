@@ -23,7 +23,7 @@ cargo clippy --all-targets -- -D warnings
 cargo run -p lantaran-cli -- --ssl example.com         # binary is named `lantaran`
 ```
 
-CI runs `cargo fmt --all --check`, clippy with `-D warnings` and the tests on macOS, Linux and Windows. All three must pass, so anything Unix-only needs a `#[cfg(unix)]` guard.
+CI runs `cargo fmt --all --check`, clippy with `-D warnings` and the tests on macOS, Linux and Windows. All three must pass, so anything Unix-only needs a `#[cfg(unix)]` guard. A separate Linux job measures coverage with `cargo-llvm-cov` and fails below 85% of lines in the engine and rules (the CLI's `main.rs` is excluded). The summary is on each run's page; raise the threshold in `.github/workflows/ci.yml` when coverage goes up.
 
 To check HTTPS decryption by hand, use a throwaway data directory so the real root certificate is untouched:
 

@@ -64,6 +64,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Write lcov report
         run: cargo llvm-cov report --lcov --output-path lcov.info
+      # The threshold covers the engine and rules. The CLI's main.rs is
+      # argument parsing and printing, and would only dilute the number.
+      # Raise the threshold as tests are added; it sits a few points below
+      # the current value so it catches regressions, not small changes.
+      - name: Check coverage threshold
+        run: cargo llvm-cov report --ignore-filename-regex 'cli/src/main\.rs' --fail-under-lines 85
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
